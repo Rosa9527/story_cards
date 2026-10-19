@@ -1,5 +1,5 @@
 // ===== 剧情抽卡（Story Cards）index.js — 构建产物，勿手改 =====
-// 构建时间: 2026-10-20 00:44:02 · 文件数: 11 · 指纹: af07b4c2
+// 构建时间: 2026-10-20 01:12:19 · 文件数: 11 · 指纹: ee942cb2
 
 // ===== js/constants.js =====
 // ===== 剧情抽卡（Story Cards）全局常量 =====
@@ -65,6 +65,13 @@ const SC_INJECT_TYPE_IN_CHAT = 1;
 const SC_INJECT_ROLE_SYSTEM = 0;
 // 注入深度：0 = 贴在最后一条消息（刚发出去的抽卡触发短语）正下方。
 const SC_INJECT_DEPTH = 0;
+// 注入的超时兜底：正常情况下 generationEnded / generationStopped 会清空槽位；
+// 万一宿主压根没开始生成（发送被拦、命令没触发生成），到这个时间也要清掉，
+// 不能让卡面一直挂在槽位里、跟着之后某条无关消息发出去。
+const SC_INJECT_TTL_MS = 60000;
+// 重放记录的有效期：超过这个时间就不再把旧卡塞回提示词（防止很久以后点的
+// 「重新生成」把早就结束的那张卡又捞回来）。
+const SC_RETRY_REPLAY_TTL_MS = 10 * 60 * 1000;
 
 // ---------- 发送 ----------
 // 点「剧情抽卡」后，输入框里填的触发短语。刻意极短：聊天记录干净、上下文零负担，
@@ -105,6 +112,8 @@ const SC_FLOAT_RESIZE_HOOK_KEY = '__story_cards_float_resize__';
 
 // 本轮抽卡记录（内存态，供重新生成时重放注入）。
 const SC_LAST_DRAW_KEY = '__story_cards_last_draw__';
+// 注入超时清理的定时器句柄（避免重复排程 / 清理后残留）。
+const SC_INJECT_EXPIRY_TIMER_KEY = '__story_cards_inject_expiry__';
 
 
 // ===== js/utils.js =====
@@ -537,7 +546,7 @@ function scGetChatLength() {
 
 // ===== js/cards-data.js =====
 // ===== 剧情抽卡（Story Cards）卡库数据 · 构建产物，勿手改 =====
-// 生成时间: 2026-10-20 00:44:02 · 卡牌数: 138
+// 生成时间: 2026-10-20 01:12:19 · 卡牌数: 138
 // 来源: cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md
 // 重新生成: node build.js（或 node build.js --cards）
 // 卡面解析规则见 tools/card-parse.js，构建期与运行期共用同一份实现。
@@ -7641,13 +7650,18 @@ function scDrawCard(settings, chatId) {
 }
 
 // 抽卡后落账：记入已抽 + 存本轮记录（供重新生成时重放注入）。
+// triggerIndex 是触发短语在 chat 里的下标：重放前用它确认「还是刚抽完卡的那一处」，
+// 防止很久以后点重新生成把旧卡又捞回来。
 function scCommitDraw(card, chatId) {
   if (!card) return;
   scRecordDrawn(card, chatId);
+  const ctx = scGetContextSafe();
+  const chat = Array.isArray(ctx?.chat) ? ctx.chat : null;
   globalThis[SC_LAST_DRAW_KEY] = {
     cardId: card.id,
     cardName: card.name,
     chatId: String(chatId || ''),
+    triggerIndex: chat && chat.length > 0 ? chat.length - 1 : -1,
     at: new Date().toISOString(),
   };
 }
@@ -7966,6 +7980,7 @@ function scApplyInjection(card, ctx) {
     // 先清空再写入：宿主按 key 覆盖，但先清一次能保证旧轮的长文本不会残留尾巴。
     api.setExtensionPrompt(SC_INJECT_KEY, '', api.inChat, SC_INJECT_DEPTH);
     api.setExtensionPrompt(SC_INJECT_KEY, text, api.inChat, SC_INJECT_DEPTH, false, api.systemRole);
+    scScheduleInjectionExpiry();
     return true;
   } catch (error) {
     console.warn(`[${SC_MODULE_DISPLAY_NAME}] 写入提示词注入失败`, error);
@@ -7973,8 +7988,30 @@ function scApplyInjection(card, ctx) {
   }
 }
 
+// 兜底过期：正常情况下 generationEnded / generationStopped 会清空槽位。
+// 但若宿主压根没开始生成（发送被拦、触发短语没引起生成），就等不到这两个事件，
+// 卡面会一直挂在槽位里、被之后某条无关消息带出去。这里到点强制清一次。
+function scExpireInjection() {
+  globalThis[SC_INJECT_EXPIRY_TIMER_KEY] = null;
+  scClearInjection(scGetContextSafe());
+  scLogInfo('注入已超时清理（未观察到生成结束事件）');
+}
+
+function scScheduleInjectionExpiry() {
+  scCancelInjectionExpiry();
+  if (typeof setTimeout !== 'function') return;
+  globalThis[SC_INJECT_EXPIRY_TIMER_KEY] = setTimeout(scExpireInjection, SC_INJECT_TTL_MS);
+}
+
+function scCancelInjectionExpiry() {
+  const timer = globalThis[SC_INJECT_EXPIRY_TIMER_KEY];
+  if (timer && typeof clearTimeout === 'function') clearTimeout(timer);
+  globalThis[SC_INJECT_EXPIRY_TIMER_KEY] = null;
+}
+
 // 清空注入槽位。
 function scClearInjection(ctx) {
+  scCancelInjectionExpiry();
   const api = scGetExtensionPromptApi(ctx);
   if (!api) return;
   try {
@@ -7984,18 +8021,46 @@ function scClearInjection(ctx) {
   }
 }
 
-// 重新生成（retry）重放：宿主 retry 不发 messageSent，但上一轮抽到的卡不变，
-// 因此不重新抽卡，只按本轮记录重建同一张卡的注入。
-// 校验：开关无、记录在、卡还在卡库里、且仍是同一聊天。
+// 重新生成（retry）/ swipe 重放：宿主这两条路不发 messageSent，注入不会自动重来。
+// 但重放必须**只针对这次抽卡产生的那一轮**，否则很久以后随手点一次「重新生成」，
+// 早就该结束的卡又会被塞回提示词——那就是「没点抽卡卡还赖着」。
+//
+// 锚点：抽卡发送成功后记下触发短语所在的 chat 下标。重放前校验：
+//   1. 那个下标上仍是抽卡触发短语（聊天没被别的消息顶走）；
+//   2. 聊天长度没超过「触发短语 + 它下面那一条 AI」——重新生成会删掉尾部 AI 楼，
+//      swipe 会原地替换，两者都满足；玩家又聊了几句就不满足了；
+//   3. 记录没过期（SC_RETRY_REPLAY_TTL_MS）。
 function scReplayInjectionForRetry(ctx) {
   const record = globalThis[SC_LAST_DRAW_KEY];
   if (!record || !record.cardId) return false;
   if (record.chatId && scGetChatId() && String(record.chatId) !== String(scGetChatId())) return false;
+  if (scIsRetryRecordStale(record)) return false;
+  if (!scIsRecordAtTail(record)) return false;
   const card = scGetLibrary().find((item) => item.id === record.cardId);
   if (!card) return false;
   if (!scApplyInjection(card, ctx)) return false;
   scLogInfo('重新生成：已重放上一轮抽到的卡', card.name);
   return true;
+}
+
+function scIsRetryRecordStale(record) {
+  const at = Date.parse(String(record.at || ''));
+  if (!Number.isFinite(at)) return true;
+  return Date.now() - at > SC_RETRY_REPLAY_TTL_MS;
+}
+
+// 这条记录是否仍然指向「刚抽完卡、还没走远」的那一处聊天位置。
+function scIsRecordAtTail(record) {
+  const ctx = scGetContextSafe();
+  const chat = Array.isArray(ctx?.chat) ? ctx.chat : null;
+  if (!chat) return false;
+  const index = Number(record.triggerIndex);
+  if (!Number.isInteger(index) || index < 0) return false;
+  // 触发短语还在原处（按内容校验，避免宿主裁剪消息后下标漂移却没被发现）。
+  const anchor = chat[index];
+  if (!anchor || String(anchor.mes || '').trim() !== SC_TRIGGER_TEXT) return false;
+  // 只允许「触发短语」或「触发短语 + 紧跟的一条 AI 楼」这两种尾部形态。
+  return chat.length <= index + 2;
 }
 
 
@@ -8874,9 +8939,12 @@ function scOnGenerationStarted(type) {
   scReplayInjectionForRetry(scGetContextSafe());
 }
 
-// 切聊天 → 抽卡记录按聊天分区，刷新面板摘要即可（注入槽位由宿主自己清）。
+// 切聊天 → 抽卡记录按聊天分区，刷新面板摘要即可。
+// 注入槽位必须**主动清**：宿主在切聊天时并不保证会清（实测 TauriTavern 里
+// CHAT_CHANGED 之后槽位内容原样还在），不清理就会把上一个聊天的卡带进新聊天。
 function scOnChatChanged() {
   globalThis[SC_LAST_DRAW_KEY] = null;
+  scClearInjection(scGetContextSafe());
   scRefreshPanel();
 }
 

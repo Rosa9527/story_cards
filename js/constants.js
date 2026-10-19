@@ -61,6 +61,13 @@ const SC_INJECT_TYPE_IN_CHAT = 1;
 const SC_INJECT_ROLE_SYSTEM = 0;
 // 注入深度：0 = 贴在最后一条消息（刚发出去的抽卡触发短语）正下方。
 const SC_INJECT_DEPTH = 0;
+// 注入的超时兜底：正常情况下 generationEnded / generationStopped 会清空槽位；
+// 万一宿主压根没开始生成（发送被拦、命令没触发生成），到这个时间也要清掉，
+// 不能让卡面一直挂在槽位里、跟着之后某条无关消息发出去。
+const SC_INJECT_TTL_MS = 60000;
+// 重放记录的有效期：超过这个时间就不再把旧卡塞回提示词（防止很久以后点的
+// 「重新生成」把早就结束的那张卡又捞回来）。
+const SC_RETRY_REPLAY_TTL_MS = 10 * 60 * 1000;
 
 // ---------- 发送 ----------
 // 点「剧情抽卡」后，输入框里填的触发短语。刻意极短：聊天记录干净、上下文零负担，
@@ -101,3 +108,5 @@ const SC_FLOAT_RESIZE_HOOK_KEY = '__story_cards_float_resize__';
 
 // 本轮抽卡记录（内存态，供重新生成时重放注入）。
 const SC_LAST_DRAW_KEY = '__story_cards_last_draw__';
+// 注入超时清理的定时器句柄（避免重复排程 / 清理后残留）。
+const SC_INJECT_EXPIRY_TIMER_KEY = '__story_cards_inject_expiry__';

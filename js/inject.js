@@ -68,6 +68,7 @@ function scApplyInjection(card, ctx) {
     // 先清空再写入：宿主按 key 覆盖，但先清一次能保证旧轮的长文本不会残留尾巴。
     api.setExtensionPrompt(SC_INJECT_KEY, '', api.inChat, SC_INJECT_DEPTH);
     api.setExtensionPrompt(SC_INJECT_KEY, text, api.inChat, SC_INJECT_DEPTH, false, api.systemRole);
+    scScheduleInjectionExpiry();
     return true;
   } catch (error) {
     console.warn(`[${SC_MODULE_DISPLAY_NAME}] 写入提示词注入失败`, error);
@@ -75,8 +76,30 @@ function scApplyInjection(card, ctx) {
   }
 }
 
+// 兜底过期：正常情况下 generationEnded / generationStopped 会清空槽位。
+// 但若宿主压根没开始生成（发送被拦、触发短语没引起生成），就等不到这两个事件，
+// 卡面会一直挂在槽位里、被之后某条无关消息带出去。这里到点强制清一次。
+function scExpireInjection() {
+  globalThis[SC_INJECT_EXPIRY_TIMER_KEY] = null;
+  scClearInjection(scGetContextSafe());
+  scLogInfo('注入已超时清理（未观察到生成结束事件）');
+}
+
+function scScheduleInjectionExpiry() {
+  scCancelInjectionExpiry();
+  if (typeof setTimeout !== 'function') return;
+  globalThis[SC_INJECT_EXPIRY_TIMER_KEY] = setTimeout(scExpireInjection, SC_INJECT_TTL_MS);
+}
+
+function scCancelInjectionExpiry() {
+  const timer = globalThis[SC_INJECT_EXPIRY_TIMER_KEY];
+  if (timer && typeof clearTimeout === 'function') clearTimeout(timer);
+  globalThis[SC_INJECT_EXPIRY_TIMER_KEY] = null;
+}
+
 // 清空注入槽位。
 function scClearInjection(ctx) {
+  scCancelInjectionExpiry();
   const api = scGetExtensionPromptApi(ctx);
   if (!api) return;
   try {
@@ -86,16 +109,44 @@ function scClearInjection(ctx) {
   }
 }
 
-// 重新生成（retry）重放：宿主 retry 不发 messageSent，但上一轮抽到的卡不变，
-// 因此不重新抽卡，只按本轮记录重建同一张卡的注入。
-// 校验：开关无、记录在、卡还在卡库里、且仍是同一聊天。
+// 重新生成（retry）/ swipe 重放：宿主这两条路不发 messageSent，注入不会自动重来。
+// 但重放必须**只针对这次抽卡产生的那一轮**，否则很久以后随手点一次「重新生成」，
+// 早就该结束的卡又会被塞回提示词——那就是「没点抽卡卡还赖着」。
+//
+// 锚点：抽卡发送成功后记下触发短语所在的 chat 下标。重放前校验：
+//   1. 那个下标上仍是抽卡触发短语（聊天没被别的消息顶走）；
+//   2. 聊天长度没超过「触发短语 + 它下面那一条 AI」——重新生成会删掉尾部 AI 楼，
+//      swipe 会原地替换，两者都满足；玩家又聊了几句就不满足了；
+//   3. 记录没过期（SC_RETRY_REPLAY_TTL_MS）。
 function scReplayInjectionForRetry(ctx) {
   const record = globalThis[SC_LAST_DRAW_KEY];
   if (!record || !record.cardId) return false;
   if (record.chatId && scGetChatId() && String(record.chatId) !== String(scGetChatId())) return false;
+  if (scIsRetryRecordStale(record)) return false;
+  if (!scIsRecordAtTail(record)) return false;
   const card = scGetLibrary().find((item) => item.id === record.cardId);
   if (!card) return false;
   if (!scApplyInjection(card, ctx)) return false;
   scLogInfo('重新生成：已重放上一轮抽到的卡', card.name);
   return true;
+}
+
+function scIsRetryRecordStale(record) {
+  const at = Date.parse(String(record.at || ''));
+  if (!Number.isFinite(at)) return true;
+  return Date.now() - at > SC_RETRY_REPLAY_TTL_MS;
+}
+
+// 这条记录是否仍然指向「刚抽完卡、还没走远」的那一处聊天位置。
+function scIsRecordAtTail(record) {
+  const ctx = scGetContextSafe();
+  const chat = Array.isArray(ctx?.chat) ? ctx.chat : null;
+  if (!chat) return false;
+  const index = Number(record.triggerIndex);
+  if (!Number.isInteger(index) || index < 0) return false;
+  // 触发短语还在原处（按内容校验，避免宿主裁剪消息后下标漂移却没被发现）。
+  const anchor = chat[index];
+  if (!anchor || String(anchor.mes || '').trim() !== SC_TRIGGER_TEXT) return false;
+  // 只允许「触发短语」或「触发短语 + 紧跟的一条 AI 楼」这两种尾部形态。
+  return chat.length <= index + 2;
 }

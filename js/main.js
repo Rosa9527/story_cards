@@ -119,9 +119,12 @@ function scOnGenerationStarted(type) {
   scReplayInjectionForRetry(scGetContextSafe());
 }
 
-// 切聊天 → 抽卡记录按聊天分区，刷新面板摘要即可（注入槽位由宿主自己清）。
+// 切聊天 → 抽卡记录按聊天分区，刷新面板摘要即可。
+// 注入槽位必须**主动清**：宿主在切聊天时并不保证会清（实测 TauriTavern 里
+// CHAT_CHANGED 之后槽位内容原样还在），不清理就会把上一个聊天的卡带进新聊天。
 function scOnChatChanged() {
   globalThis[SC_LAST_DRAW_KEY] = null;
+  scClearInjection(scGetContextSafe());
   scRefreshPanel();
 }
 

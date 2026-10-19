@@ -497,11 +497,85 @@ check('槽位内容含卡面', slot && slot.value.includes('孩子不见了'));
 env.sandbox.scClearInjection(env.host);
 check('清理后槽位为空', env.host.extensionPrompts['story-cards-draw'].value === '');
 
-// 重新生成重放
+// 重新生成重放：只有「刚抽完、没走远」的那一轮才允许重放。
+// 造一个真实形态的聊天：... + 触发短语（最后一条）。
+env.host.chat.push({ is_user: true, mes: TRIGGER_TEXT });
 env.sandbox.scCommitDraw(sample, 'test-chat');
 env.sandbox.scReplayInjectionForRetry(env.host);
 check('重新生成能重放同一张卡的注入',
   env.host.extensionPrompts['story-cards-draw'].value.includes('C1-03-半盏灯'));
+
+// 生成结束 → 槽位清空
+env.sandbox.scClearInjection(env.host);
+check('生成结束后槽位为空', env.host.extensionPrompts['story-cards-draw'].value === '');
+
+// 关键回归：生成结束之后，聊天往下走了几步，再点「重新生成」不应把旧卡捞回来。
+env.host.chat.push({ is_ai: true, mes: 'AI 第一轮回复' });
+env.host.chat.push({ is_user: true, mes: '玩家又聊了一句' });
+env.host.chat.push({ is_ai: true, mes: 'AI 第二轮回复' });
+const replayedFar = env.sandbox.scReplayInjectionForRetry(env.host);
+check('聊天已经往下走时，重新生成不再重放旧卡', replayedFar === false,
+  '返回值 ' + replayedFar);
+check('不重放时槽位保持为空',
+  env.host.extensionPrompts['story-cards-draw'].value === '',
+  env.host.extensionPrompts['story-cards-draw'].value.slice(0, 40));
+
+// 过期记录也不重放
+env.host.chat.length = 0;
+env.host.chat.push({ is_user: true, mes: TRIGGER_TEXT });
+env.sandbox.scCommitDraw(sample, 'test-chat');
+env.sandbox.__story_cards_last_draw__ = Object.assign(
+  {}, env.sandbox.__story_cards_last_draw__, { at: new Date(Date.now() - 11 * 60 * 1000).toISOString() });
+const replayedStale = env.sandbox.scReplayInjectionForRetry(env.host);
+check('超过有效期的记录不再重放', replayedStale === false, '返回值 ' + replayedStale);
+
+// 换聊天不重放
+env.host.chat.length = 0;
+env.host.chat.push({ is_user: true, mes: TRIGGER_TEXT });
+env.sandbox.scCommitDraw(sample, 'test-chat');
+const originalChatId = env.host.getCurrentChatId;
+env.host.getCurrentChatId = () => 'other-chat';
+const replayedOtherChat = env.sandbox.scReplayInjectionForRetry(env.host);
+env.host.getCurrentChatId = originalChatId;
+check('换聊天后不重放上一轮的卡', replayedOtherChat === false, '返回值 ' + replayedOtherChat);
+
+// 触发短语被同位置的别的消息顶掉（聊天被裁剪 / 编辑）时不重放
+env.host.chat.length = 0;
+env.host.chat.push({ is_user: true, mes: TRIGGER_TEXT });
+env.sandbox.scCommitDraw(sample, 'test-chat');
+env.host.chat[0] = { is_user: true, mes: '玩家手动打的一句别的话' };
+const replayedMoved = env.sandbox.scReplayInjectionForRetry(env.host);
+check('触发短语不在原处时不重放', replayedMoved === false, '返回值 ' + replayedMoved);
+
+// 切聊天必须主动清槽位（宿主不保证会清）
+env.sandbox.scApplyInjection(sample, env.host);
+check('切聊天前槽位有内容',
+  env.host.extensionPrompts['story-cards-draw'].value.includes('半盏灯'));
+env.host._emit(env.host.event_types.CHAT_CHANGED);
+check('切聊天后槽位被清空',
+  env.host.extensionPrompts['story-cards-draw'].value === '',
+  env.host.extensionPrompts['story-cards-draw'].value.slice(0, 40));
+check('切聊天后重放记录被清掉', !env.sandbox.__story_cards_last_draw__);
+
+// 注入超时兜底：宿主要是压根没开始生成，generationEnded 就不来，
+// 槽位里的卡面会一直挂着、被之后某条无关消息带出去。到点必须自己清。
+env.sandbox.scApplyInjection(sample, env.host);
+check('注入后排上了超时清理定时器',
+  Boolean(env.sandbox.__story_cards_inject_expiry__));
+check('超时前槽位有内容',
+  env.host.extensionPrompts['story-cards-draw'].value.includes('半盏灯'));
+env.sandbox.scExpireInjection();
+check('超时后槽位被清空',
+  env.host.extensionPrompts['story-cards-draw'].value === '',
+  env.host.extensionPrompts['story-cards-draw'].value.slice(0, 40));
+check('超时后定时器句柄已释放',
+  env.sandbox.__story_cards_inject_expiry__ === null);
+
+// 正常清理也要取消定时器，别让它在后面莫名其妙再清一次。
+env.sandbox.scApplyInjection(sample, env.host);
+env.sandbox.scClearInjection(env.host);
+check('主动清理会取消超时定时器',
+  env.sandbox.__story_cards_inject_expiry__ === null);
 
 // ---------- 5. 发送链路 ----------
 section('发送链路（填输入框 → 发送 → 落账）');

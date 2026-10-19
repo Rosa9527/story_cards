@@ -289,13 +289,18 @@ function scDrawCard(settings, chatId) {
 }
 
 // 抽卡后落账：记入已抽 + 存本轮记录（供重新生成时重放注入）。
+// triggerIndex 是触发短语在 chat 里的下标：重放前用它确认「还是刚抽完卡的那一处」，
+// 防止很久以后点重新生成把旧卡又捞回来。
 function scCommitDraw(card, chatId) {
   if (!card) return;
   scRecordDrawn(card, chatId);
+  const ctx = scGetContextSafe();
+  const chat = Array.isArray(ctx?.chat) ? ctx.chat : null;
   globalThis[SC_LAST_DRAW_KEY] = {
     cardId: card.id,
     cardName: card.name,
     chatId: String(chatId || ''),
+    triggerIndex: chat && chat.length > 0 ? chat.length - 1 : -1,
     at: new Date().toISOString(),
   };
 }
