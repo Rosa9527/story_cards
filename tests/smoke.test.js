@@ -166,7 +166,8 @@ class FakeElement {
     };
     const left = parse(this.style.left);
     const top = parse(this.style.top);
-    return { left, top, right: left + 46, bottom: top + 46, width: 46, height: 46, x: left, y: top };
+    // 与 SC_FLOAT_SIZE（constants.js）保持一致。
+    return { left, top, right: left + 38, bottom: top + 38, width: 38, height: 38, x: left, y: top };
   }
   setPointerCapture() {}
   releasePointerCapture() {}
@@ -823,7 +824,7 @@ async function main() {
   const ball = env.document.getElementById('sc-floating-button');
   check('悬浮按钮存在', Boolean(ball));
   const pointerEvent = (x, y, id) => ({ clientX: x, clientY: y, pointerId: id || 1, button: 0, preventDefault() {} });
-  // 视口 1280x800、按钮 46px、贴边留白 8px → 可放置范围 x∈[8,1226]、y∈[8,746]。
+  // 视口 1280x800、按钮 38px、贴边留白 8px → 可放置范围 x∈[8,1234]、y∈[8,754]。
   const placeBall = (x, y) => {
     env.sandbox.scApplyFloatPosition(x, y);
   };
@@ -841,7 +842,7 @@ async function main() {
   ball.style.top = '';
   env.sandbox.scRestoreFloatPosition();
   const [defLeft, defTop] = ballPos();
-  check('默认位置在视口内且偏右下', defLeft > 0 && defTop > 0 && defLeft <= 1226 && defTop <= 746,
+  check('默认位置在视口内且偏右下', defLeft > 0 && defTop > 0 && defLeft <= 1234 && defTop <= 754,
     defLeft + ',' + defTop);
 
   // 拖动：指针从 (200,200) 移到 (700,500)，位移 (+500,+300) 全在界内，应精确跟随
@@ -872,9 +873,9 @@ async function main() {
   check('微小位移不写设置', env.sandbox.scGetSettings().floatX === 700,
     String(env.sandbox.scGetSettings().floatX));
 
-  // 拖出视口要被夹回来：右下角贴 1226/746，左上角贴 8/8
+  // 拖出视口要被夹回来：右下角贴 1234/754，左上角贴 8/8
   dragBall(200, 200, 5000, 5000);
-  check('拖出右下角会被夹在视口内', ballPos()[0] === 1226 && ballPos()[1] === 746, ballPos().join(','));
+  check('拖出右下角会被夹在视口内', ballPos()[0] === 1234 && ballPos()[1] === 754, ballPos().join(','));
   ball.dispatch('pointermove', pointerEvent(-500, -500));
   check('拖出左上角会被夹在视口内', ballPos()[0] === 8 && ballPos()[1] === 8, ballPos().join(','));
   ball.dispatch('pointerup', pointerEvent(-500, -500));
@@ -890,11 +891,86 @@ async function main() {
   // 视口变化后不会跑出去：把视口缩到 400x300，位置应被夹进新视口
   env.sandbox.innerWidth = 400;
   env.sandbox.innerHeight = 300;
-  const resized = env.sandbox.scApplyFloatPosition(1226, 746);
-  check('视口变小后位置被夹进新视口', resized.x === 346 && resized.y === 246,
+  const resized = env.sandbox.scApplyFloatPosition(1234, 754);
+  check('视口变小后位置被夹进新视口', resized.x === 354 && resized.y === 254,
     resized.x + ',' + resized.y);
   env.sandbox.innerWidth = 1280;
   env.sandbox.innerHeight = 800;
+
+  // ---------- 10b. 长按隐藏悬浮球 ----------
+  section('长按隐藏悬浮球');
+  // 长按计时是 650ms，等真实时钟会让测试变慢。这里把 setTimeout 包一层：
+  // 只截住长按计时（650ms），把它存起来由测试手动触发；其余定时器照旧执行。
+  const realSetTimeout = env.sandbox.setTimeout;
+  const realClearTimeout = env.sandbox.clearTimeout;
+  let longPressTimers = [];
+  env.sandbox.setTimeout = (fn, ms) => {
+    if (ms === 650) {
+      const handle = { fn };
+      longPressTimers.push(handle);
+      return handle;
+    }
+    return realSetTimeout(fn, ms);
+  };
+  env.sandbox.clearTimeout = (handle) => {
+    if (handle && longPressTimers.includes(handle)) {
+      longPressTimers = longPressTimers.filter((h) => h !== handle);
+      return;
+    }
+    realClearTimeout(handle);
+  };
+  const fireLongPress = () => {
+    const timers = longPressTimers;
+    longPressTimers = [];
+    timers.forEach((h) => h.fn());
+  };
+
+  env.sandbox.scShowFloatingButton();
+  check('长按前悬浮球可见',
+    env.sandbox.scGetSettings().showFloatingButton === true
+      && ball.style.display !== 'none');
+  placeBall(400, 400);
+  ball.dispatch('pointerdown', pointerEvent(400, 400));
+  check('按下后排上了长按计时', longPressTimers.length === 1, String(longPressTimers.length));
+  // 容差内（< 8px）的抖动仍算长按，不该取消
+  ball.dispatch('pointermove', pointerEvent(403, 402));
+  check('容差内的微小抖动不取消长按', longPressTimers.length === 1, String(longPressTimers.length));
+  fireLongPress();
+  check('长按到点后悬浮球被隐藏',
+    env.sandbox.scGetSettings().showFloatingButton === false,
+    String(env.sandbox.scGetSettings().showFloatingButton));
+
+  // 长按之后松开，不应顺带打开面板
+  ball.dispatch('pointerup', pointerEvent(403, 402));
+  check('长按收起后松开不会打开面板', env.sandbox.scIsPanelOpen() === false);
+
+  // 面板里的「显示悬浮球」可以把它找回来
+  env.sandbox.scOpenPanel();
+  const floatBox = env.document.getElementById('sc-show-float');
+  check('面板里有「显示悬浮球」开关', Boolean(floatBox));
+  env.sandbox.scShowFloatingButton();
+  env.sandbox.scRefreshSummary();
+  check('重新打开后设置与勾选框同步',
+    env.sandbox.scGetSettings().showFloatingButton === true && floatBox.checked === true,
+    String(env.sandbox.scGetSettings().showFloatingButton) + '/' + floatBox.checked);
+  env.sandbox.scClosePanel();
+
+  // 拖动不算长按：移动超过阈值就该取消计时
+  placeBall(400, 400);
+  longPressTimers = [];
+  ball.dispatch('pointerdown', pointerEvent(400, 400));
+  ball.dispatch('pointermove', pointerEvent(500, 500));
+  check('拖动会取消长按计时', longPressTimers.length === 0, String(longPressTimers.length));
+  ball.dispatch('pointerup', pointerEvent(500, 500));
+  check('拖完悬浮球仍在',
+    env.sandbox.scGetSettings().showFloatingButton === true,
+    String(env.sandbox.scGetSettings().showFloatingButton));
+
+  // 还原计时器，别影响后面的用例
+  env.sandbox.setTimeout = realSetTimeout;
+  env.sandbox.clearTimeout = realClearTimeout;
+  env.sandbox.scShowFloatingButton();
+  env.sandbox.scClosePanel();
 
   // ---------- 11. TauriTavern 式宿主上下文（回归） ----------
   // 真实 TauriTavern 的 getContext() 有两个特点，之前任一都会让勾选「点了没反应」：

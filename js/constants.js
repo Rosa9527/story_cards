@@ -14,6 +14,7 @@ const SC_SCOPE_TREE_ID = 'sc-scope-tree';
 const SC_DRAW_BUTTON_ID = 'sc-draw-button';
 const SC_SUMMARY_ID = 'sc-scope-summary';
 const SC_AVOID_REPEAT_ID = 'sc-avoid-repeat';
+const SC_SHOW_FLOAT_ID = 'sc-show-float';
 const SC_LOAD_CARDS_BUTTON_ID = 'sc-load-cards';
 const SC_CLEAR_CARDS_BUTTON_ID = 'sc-clear-cards';
 const SC_CARD_STATUS_ID = 'sc-card-status';
@@ -43,10 +44,14 @@ const SC_DEFAULT_SETTINGS = Object.freeze({
 });
 
 // 悬浮按钮拖动：尺寸与贴边留白（与 style.css 里的 .sc-floating-button 保持一致）。
-const SC_FLOAT_SIZE = 46;
+const SC_FLOAT_SIZE = 38;
 const SC_FLOAT_MARGIN = 8;
 // 判定「这是一次拖动」而不是「点击」的位移阈值（像素）。
 const SC_FLOAT_DRAG_THRESHOLD = 5;
+// 长按隐藏：按住不放这么久（且中途没拖动）就把悬浮球收起来。
+// 与 Kaleidoscope 的悬浮球保持同一手感（650ms / 8px）。
+const SC_FLOAT_LONG_PRESS_MS = 650;
+const SC_FLOAT_LONG_PRESS_SLOP = 8;
 
 // 按聊天记录已抽卡 ID 的存储位置（chatMetadata），每个聊天各记一份。
 const SC_CHAT_DRAWN_META_KEY = 'story_cards_drawn';

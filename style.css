@@ -373,8 +373,9 @@
 .sc-result--ok .sc-result__main { color: var(--sc-ok); }
 .sc-result--error .sc-result__main { color: var(--sc-err); }
 
-/* ---------- 悬浮按钮（可自由拖动） ---------- */
-/* 位置由 JS 用 left/top 控制（默认值只是兜底），所以这里不写 right/bottom。 */
+/* ---------- 悬浮按钮（可自由拖动 / 长按隐藏） ---------- */
+/* 位置由 JS 用 left/top 控制（默认值只是兜底），所以这里不写 right/bottom。
+   尺寸与 SC_FLOAT_SIZE 保持一致（38px），比早期版本小一圈，不挡聊天内容。 */
 .sc-floating-button {
   position: fixed;
   left: auto;
@@ -382,8 +383,8 @@
   right: 16px;
   bottom: 92px;
   z-index: 29000;
-  width: 46px;
-  height: 46px;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -391,22 +392,37 @@
   border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.18));
   background: var(--SmartThemeBlurTintColor, rgba(28, 28, 32, 0.92));
   color: var(--SmartThemeEmColor, #c9a227);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   cursor: grab;
-  font-size: 18px;
+  font-size: 15px;
+  opacity: 0.9;
   /* 拖动时不要让浏览器把触摸手势抢走（滚动 / 缩放），否则手机上拖不动。 */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  transition: box-shadow 0.15s;
+  transition: box-shadow 0.15s, opacity 0.15s, transform 0.15s;
 }
 
 .sc-floating-button:hover {
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  opacity: 1;
 }
 
 .sc-floating-button:active {
   cursor: grabbing;
+}
+
+/* 长按进行中：轻微放大，提示「按住不放会收起」这个手势被识别了。 */
+.sc-floating-button.sc-floating-button--holding {
+  transform: scale(1.12);
+  opacity: 1;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+/* 收起的瞬间缩一下再消失，避免「啪」一下不见。 */
+.sc-floating-button.sc-floating-button--hiding {
+  transform: scale(0.4);
+  opacity: 0;
 }
 
 @media (max-width: 640px) {

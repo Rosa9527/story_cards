@@ -1,5 +1,5 @@
 // ===== 剧情抽卡（Story Cards）index.js — 构建产物，勿手改 =====
-// 构建时间: 2026-10-20 01:12:19 · 文件数: 11 · 指纹: ee942cb2
+// 构建时间: 2026-10-20 01:23:50 · 文件数: 11 · 指纹: 9f13f6bc
 
 // ===== js/constants.js =====
 // ===== 剧情抽卡（Story Cards）全局常量 =====
@@ -18,6 +18,7 @@ const SC_SCOPE_TREE_ID = 'sc-scope-tree';
 const SC_DRAW_BUTTON_ID = 'sc-draw-button';
 const SC_SUMMARY_ID = 'sc-scope-summary';
 const SC_AVOID_REPEAT_ID = 'sc-avoid-repeat';
+const SC_SHOW_FLOAT_ID = 'sc-show-float';
 const SC_LOAD_CARDS_BUTTON_ID = 'sc-load-cards';
 const SC_CLEAR_CARDS_BUTTON_ID = 'sc-clear-cards';
 const SC_CARD_STATUS_ID = 'sc-card-status';
@@ -47,10 +48,14 @@ const SC_DEFAULT_SETTINGS = Object.freeze({
 });
 
 // 悬浮按钮拖动：尺寸与贴边留白（与 style.css 里的 .sc-floating-button 保持一致）。
-const SC_FLOAT_SIZE = 46;
+const SC_FLOAT_SIZE = 38;
 const SC_FLOAT_MARGIN = 8;
 // 判定「这是一次拖动」而不是「点击」的位移阈值（像素）。
 const SC_FLOAT_DRAG_THRESHOLD = 5;
+// 长按隐藏：按住不放这么久（且中途没拖动）就把悬浮球收起来。
+// 与 Kaleidoscope 的悬浮球保持同一手感（650ms / 8px）。
+const SC_FLOAT_LONG_PRESS_MS = 650;
+const SC_FLOAT_LONG_PRESS_SLOP = 8;
 
 // 按聊天记录已抽卡 ID 的存储位置（chatMetadata），每个聊天各记一份。
 const SC_CHAT_DRAWN_META_KEY = 'story_cards_drawn';
@@ -546,7 +551,7 @@ function scGetChatLength() {
 
 // ===== js/cards-data.js =====
 // ===== 剧情抽卡（Story Cards）卡库数据 · 构建产物，勿手改 =====
-// 生成时间: 2026-10-20 01:12:19 · 卡牌数: 138
+// 生成时间: 2026-10-20 01:23:50 · 卡牌数: 138
 // 来源: cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md
 // 重新生成: node build.js（或 node build.js --cards）
 // 卡面解析规则见 tools/card-parse.js，构建期与运行期共用同一份实现。
@@ -8300,6 +8305,21 @@ function scCreatePanel() {
   options.title = '同一个聊天里不重复抽同一张卡；范围内抽完会提示并允许重复';
   body.appendChild(options);
 
+  // 「显示悬浮球」开关：长按悬浮球会把它收起来，这里是找回它的入口
+  // （扩展菜单打开面板后勾上即可），避免长按变成一个找不回来的单向操作。
+  const floatOption = scCreate('label', 'sc-option');
+  const floatBox = scCreate('input', 'sc-option__checkbox');
+  floatBox.type = 'checkbox';
+  floatBox.id = SC_SHOW_FLOAT_ID;
+  floatBox.addEventListener('change', () => {
+    if (floatBox.checked) scShowFloatingButton();
+    else scHideFloatingButton();
+  });
+  floatOption.appendChild(floatBox);
+  floatOption.appendChild(scCreate('span', 'sc-option__label', '显示悬浮球'));
+  floatOption.title = '长按悬浮球可隐藏；在这里或扩展菜单里重新打开';
+  body.appendChild(floatOption);
+
   const drawButton = scCreate('button', 'sc-draw-button');
   drawButton.id = SC_DRAW_BUTTON_ID;
   drawButton.type = 'button';
@@ -8325,6 +8345,7 @@ function scCreatePanel() {
 
 let scFloatDrag = null;
 let scFloatDidDrag = false;
+let scFloatLongPressTimer = null;
 
 function scViewportSize() {
   const width = Number(globalThis.innerWidth) || 0;
@@ -8391,6 +8412,40 @@ function scEndFloatDrag(pointerId) {
   scFloatDrag = null;
 }
 
+// 长按隐藏悬浮球：把开关写进设置并立即生效。面板里「显示悬浮球」可以反向打开，
+// 所以不是单向操作——收起之后还能找回来。
+function scHideFloatingButton() {
+  const settings = scGetSettings();
+  settings.showFloatingButton = false;
+  scSaveSettings();
+  const button = scEl(SC_FLOATING_BUTTON_ID);
+  if (button) {
+    button.classList.remove('sc-floating-button--holding');
+    button.classList.add('sc-floating-button--hiding');
+  }
+  // 让 CSS 的缩小动画先播完，再把 display 切成 none。
+  setTimeout(() => {
+    if (button) button.classList.remove('sc-floating-button--hiding');
+    scApplyFloatingButtonVisibility();
+    scRefreshSummary();
+  }, 160);
+  scToast('info', '悬浮球已隐藏，可从「扩展菜单 → 剧情抽卡」重新打开');
+}
+
+function scShowFloatingButton() {
+  const settings = scGetSettings();
+  settings.showFloatingButton = true;
+  scSaveSettings();
+  scApplyFloatingButtonVisibility();
+}
+
+function scCancelFloatLongPress() {
+  if (scFloatLongPressTimer && typeof clearTimeout === 'function') clearTimeout(scFloatLongPressTimer);
+  scFloatLongPressTimer = null;
+  const button = scEl(SC_FLOATING_BUTTON_ID);
+  if (button) button.classList.remove('sc-floating-button--holding');
+}
+
 function scInstallFloatDrag(button) {
   button.addEventListener('pointerdown', (event) => {
     // 只处理主键（鼠标左键 / 触摸 / 笔）。
@@ -8406,11 +8461,28 @@ function scInstallFloatDrag(button) {
       x: rect.left,
       y: rect.top,
       moved: false,
+      // 长按已触发：这一轮的 pointerup / click 都不要再当点击处理。
+      longPressed: false,
     };
     if (button.setPointerCapture) {
       try {
         button.setPointerCapture(event.pointerId);
       } catch (error) { /* 忽略 */ }
+    }
+    // 长按计时从按下开始；一旦移动超过阈值就被取消（那是拖动，不是长按）。
+    scCancelFloatLongPress();
+    button.classList.add('sc-floating-button--holding');
+    if (typeof setTimeout === 'function') {
+      const pointerId = event.pointerId;
+      scFloatLongPressTimer = setTimeout(() => {
+        scFloatLongPressTimer = null;
+        const drag = scFloatDrag;
+        if (!drag || drag.pointerId !== pointerId || drag.moved) return;
+        drag.longPressed = true;
+        scFloatDidDrag = true;
+        scEndFloatDrag(pointerId);
+        scHideFloatingButton();
+      }, SC_FLOAT_LONG_PRESS_MS);
     }
   });
 
@@ -8418,7 +8490,10 @@ function scInstallFloatDrag(button) {
     if (!scFloatDrag || event.pointerId !== scFloatDrag.pointerId) return;
     const dx = event.clientX - scFloatDrag.startX;
     const dy = event.clientY - scFloatDrag.startY;
-    if (!scFloatDrag.moved && Math.hypot(dx, dy) < SC_FLOAT_DRAG_THRESHOLD) return;
+    const distance = Math.hypot(dx, dy);
+    // 超过「长按容差」就确定是拖动，取消长按计时。
+    if (distance >= SC_FLOAT_LONG_PRESS_SLOP) scCancelFloatLongPress();
+    if (!scFloatDrag.moved && distance < SC_FLOAT_DRAG_THRESHOLD) return;
     scFloatDrag.moved = true;
     const next = scApplyFloatPosition(event.clientX - scFloatDrag.offsetX, event.clientY - scFloatDrag.offsetY);
     if (next) {
@@ -8429,14 +8504,17 @@ function scInstallFloatDrag(button) {
 
   button.addEventListener('pointerup', (event) => {
     if (!scFloatDrag || event.pointerId !== scFloatDrag.pointerId) return;
+    scCancelFloatLongPress();
     const moved = scFloatDrag.moved;
+    const longPressed = scFloatDrag.longPressed;
     scEndFloatDrag(event.pointerId);
-    // 拖动过就不要把 pointerup 当成点击（否则拖完会顺手把面板打开）。
-    scFloatDidDrag = moved;
+    // 拖动或长按过就不要把 pointerup 当成点击（否则拖完/收完会顺手把面板打开）。
+    scFloatDidDrag = moved || longPressed;
   });
 
   button.addEventListener('pointercancel', (event) => {
     if (!scFloatDrag || event.pointerId !== scFloatDrag.pointerId) return;
+    scCancelFloatLongPress();
     scEndFloatDrag(event.pointerId);
     scFloatDidDrag = false;
   });
@@ -8465,7 +8543,7 @@ function scCreateFloatingButton() {
   const button = scCreate('div', 'sc-floating-button');
   button.id = SC_FLOATING_BUTTON_ID;
   button.tabIndex = 0;
-  button.title = SC_MODULE_DISPLAY_NAME + '（可拖动）';
+  button.title = SC_MODULE_DISPLAY_NAME + '：轻点打开 / 拖动移动 / 长按隐藏';
   button.innerHTML = `<i class="${SC_DRAW_ICON_CLASS}"></i>`;
   document.body.appendChild(button);
   scInstallFloatDrag(button);
@@ -8672,6 +8750,8 @@ function scRefreshSummary() {
   // 勾选框状态跟设置对齐（设置可能被别处改动）。
   const avoidRepeatBox = scEl(SC_AVOID_REPEAT_ID);
   if (avoidRepeatBox) avoidRepeatBox.checked = settings.avoidRepeat !== false;
+  const floatBox = scEl(SC_SHOW_FLOAT_ID);
+  if (floatBox) floatBox.checked = settings.showFloatingButton !== false;
   const stats = scSummarizeSelection(settings);
   const chatId = scGetChatId();
   const { cards: pool, unrestricted } = scFilterBySelection(settings);
