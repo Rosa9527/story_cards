@@ -1,7 +1,7 @@
 // ===== 剧情抽卡（Story Cards）冒烟测试 =====
 // 在 Node 里用最小 DOM / 宿主上下文替身跑一遍 index.js，验证：
 //   1. 卡库构建结果（138 张、字段完整、卡面/注意事项解析正确）；
-//   2. 范围树与勾选（勾回目 / 勾分类 / 勾卡组、三态统计、未勾=全库）；
+//   2. 范围树与勾选（勾主题 / 勾分类 / 勾卡组、三态统计、未勾=全库）；
 //   3. 抽卡与「抽过不重复」（含抽完回退重抽）；
 //   4. 注入文本形态（<Story_Card_Draw> 块、卡面与注意事项都在、无正文泄漏）；
 //   5. 发送链路（填输入框 → 点发送按钮 → chat 变长 → 落账）。
@@ -365,7 +365,7 @@ check('能按 id 找到 C1-03-半盏灯', Boolean(sample));
 if (sample) {
   check('卡名解析正确', sample.name === '半盏灯', sample.name);
   check('卡号解析正确', sample.number === 'C1-03', sample.number);
-  check('卡组/分类/回目解析正确', sample.deck === '红楼梦' && sample.category === '现实类' && sample.chapter === '第一回',
+  check('卡组/分类/主题解析正确', sample.deck === '红楼梦' && sample.category === '现实类' && sample.chapter === '市井生计',
     [sample.deck, sample.category, sample.chapter].join('/'));
   check('类型解析正确', sample.type === '失去 / 疏忽', sample.type);
   check('卡面非空且含正文', sample.face.includes('烧了一半的灯') && sample.face.includes('孩子不见了'),
@@ -395,9 +395,9 @@ const fantasy = tree[0].categories.find((c) => c.name === '奇幻类');
 const reality = tree[0].categories.find((c) => c.name === '现实类');
 check('类型与分类齐全', fantasy && reality && fantasy.total === 7 && reality.total === 131,
   (fantasy && fantasy.total) + '/' + (reality && reality.total));
-// 回目叶子 = (分类, 回目) 组合数：现实类 20 回 + 奇幻类 7 回 = 27。
+// 主题叶子 = (分类, 主题) 组合数：现实类 8 个 + 奇幻类 3 个 = 11。
 const leafCount = fantasy.chapters.length + reality.chapters.length;
-check('回目叶子数 = 27（现实类 20 + 奇幻类 7）', leafCount === 27, String(leafCount));
+check('主题叶子数 = 11（现实类 8 + 奇幻类 3）', leafCount === 11, String(leafCount));
 
 const settings = env.sandbox.scGetSettings();
 let stats = env.sandbox.scSummarizeSelection(settings);
@@ -406,14 +406,14 @@ let pool = env.sandbox.scFilterBySelection(settings);
 check('未勾选时抽卡范围 = 全库（unrestricted）', pool.unrestricted === true && pool.cards.length === 138,
   String(pool.cards.length));
 
-// 勾一个回目
-env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '第一回', true);
+// 勾一个主题
+env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '丧葬礼仪', true);
 stats = env.sandbox.scSummarizeSelection(settings);
-check('勾「奇幻类/第一回」后 selectedLeaves = 1', stats.selectedLeaves === 1, String(stats.selectedLeaves));
-check('勾「奇幻类/第一回」后覆盖 1 张', stats.selectedCards === 1, String(stats.selectedCards));
+check('勾「奇幻类/丧葬礼仪」后 selectedLeaves = 1', stats.selectedLeaves === 1, String(stats.selectedLeaves));
+check('勾「奇幻类/丧葬礼仪」后覆盖 1 张', stats.selectedCards === 1, String(stats.selectedCards));
 pool = env.sandbox.scFilterBySelection(settings);
 check('抽卡范围收敛到 1 张', pool.unrestricted === false && pool.cards.length === 1, String(pool.cards.length));
-check('这一张就是 C1-01-要孩子的人', pool.cards[0].id === 'C1-01-要孩子的人', pool.cards[0].id);
+check('这一张就是 C13-01-心愿未了', pool.cards[0].id === 'C13-01-心愿未了', pool.cards[0].id);
 
 // 勾整个分类
 const fantasyChapters = fantasy.chapters.map((c) => c.name);
@@ -426,7 +426,7 @@ for (const category of tree[0].categories) {
   env.sandbox.scSetSubtreeSelected(settings, '红楼梦', category.name, category.chapters.map((c) => c.name), true);
 }
 stats = env.sandbox.scSummarizeSelection(settings);
-check('勾整个卡组后覆盖 138 张 / 27 回', stats.selectedCards === 138 && stats.selectedLeaves === 27,
+check('勾整个卡组后覆盖 138 张 / 11 个主题', stats.selectedCards === 138 && stats.selectedLeaves === 11,
   stats.selectedCards + '/' + stats.selectedLeaves);
 
 // 全部取消 → 回到全库
@@ -436,18 +436,39 @@ for (const category of tree[0].categories) {
 stats = env.sandbox.scSummarizeSelection(settings);
 check('全部取消后回到 0 勾选', stats.selectedLeaves === 0, String(stats.selectedLeaves));
 
+// 换卡库 / 目录改版后残留的旧勾选必须被清掉，否则「勾了却抽不到」。
+// 模拟旧结构（回目名）留在设置里、新卡库里已经没有这些键。
+settings.selectedLeaves = {
+  红楼梦: { 奇幻类: { 第一回: true, 丧葬礼仪: true }, 现实类: { 第三回: true } },
+  已删除的卡组: { 某分类: { 某主题: true } },
+};
+const pruned = env.sandbox.scPruneStaleSelection(settings);
+check('清理掉失效勾选（2 个旧主题 + 1 个旧卡组）', pruned === 3, String(pruned));
+check('有效勾选（丧葬礼仪）被保留',
+  env.sandbox.scIsLeafSelected(settings, '红楼梦', '奇幻类', '丧葬礼仪') === true);
+check('失效的旧主题键被删掉',
+  !settings.selectedLeaves['红楼梦'].奇幻类['第一回']
+  && !settings.selectedLeaves['红楼梦'].现实类,
+  JSON.stringify(settings.selectedLeaves));
+check('不存在的卡组整块被删掉', !settings.selectedLeaves['已删除的卡组']);
+check('清理后抽卡范围收敛到剩下那张', env.sandbox.scFilterBySelection(settings).cards.length === 1,
+  String(env.sandbox.scFilterBySelection(settings).cards.length));
+// 干净的设置不该被误改
+settings.selectedLeaves = {};
+check('没有失效勾选时返回 0', env.sandbox.scPruneStaleSelection(settings) === 0);
+
 // ---------- 3. 抽卡与抽过不重复 ----------
 section('抽卡与抽过不重复');
-// 只勾「奇幻类/第一回」（1 张），验证抽完不重复 + 抽完回退。
-env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '第一回', true);
+// 只勾「奇幻类/丧葬礼仪」（1 张），验证抽完不重复 + 抽完回退。
+env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '丧葬礼仪', true);
 settings.avoidRepeat = true;
 let draw = env.sandbox.scDrawCard(settings, 'test-chat');
 check('能抽到卡', Boolean(draw.card));
-check('抽到的是范围内那张', draw.card && draw.card.id === 'C1-01-要孩子的人', draw.card && draw.card.id);
+check('抽到的是范围内那张', draw.card && draw.card.id === 'C13-01-心愿未了', draw.card && draw.card.id);
 check('首次抽卡未抽过', draw.drawnInPool === 0);
 env.sandbox.scCommitDraw(draw.card, 'test-chat');
 check('落账后 chatMetadata 里有记录',
-  Boolean(env.host.chatMetadata.story_cards_drawn?.['test-chat']?.['C1-01-要孩子的人']));
+  Boolean(env.host.chatMetadata.story_cards_drawn?.['test-chat']?.['C13-01-心愿未了']));
 check('落账写了 chatMetadata', (env.host._metadataSaves || 0) > 0);
 
 draw = env.sandbox.scDrawCard(settings, 'test-chat');
@@ -465,8 +486,8 @@ draw = env.sandbox.scDrawCard(settings, 'test-chat');
 check('关掉不重复后不标记 exhausted', draw.exhausted === false);
 settings.avoidRepeat = true;
 
-// 大范围随机：抽 200 次应覆盖多张且都在范围内
-env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '第一回', false);
+// 大范围随机：抽 300 次应覆盖多张且都在范围内
+env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '丧葬礼仪', false);
 env.sandbox.scSetSubtreeSelected(settings, '红楼梦', '现实类', reality.chapters.map((c) => c.name), true);
 const seen = new Set();
 let outOfScope = 0;
@@ -480,8 +501,8 @@ check('300 次抽卡都在范围内（无越界）', outOfScope === 0, String(ou
 check('300 次抽卡覆盖了多张卡（随机性正常）', seen.size > 50, String(seen.size));
 
 // 重置记录
-env.sandbox.scSetLeafSelected(settings, '红楼梦', '现实类', '第一回', false);
-env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '第一回', true);
+env.sandbox.scSetLeafSelected(settings, '红楼梦', '现实类', '市井生计', false);
+env.sandbox.scSetLeafSelected(settings, '红楼梦', '奇幻类', '丧葬礼仪', true);
 const cleared = env.sandbox.scResetDrawn('test-chat');
 check('重置返回清掉的条数', cleared === 1, String(cleared));
 check('重置后记录为空', Object.keys(env.host.chatMetadata.story_cards_drawn['test-chat']).length === 0);
@@ -666,7 +687,7 @@ async function main() {
   // 默认必须全部收起
   env.sandbox.scClosePanel();
   env.sandbox.scOpenPanel();
-  check('默认不展开：没有可见的回目行', chapterRows().length === 0, String(chapterRows().length));
+  check('默认不展开：没有可见的主题行', chapterRows().length === 0, String(chapterRows().length));
   check('默认不展开：卡组行还在', deckRows().length === 1, String(deckRows().length));
 
   // 点卡组行的空白处 → 展开
@@ -695,11 +716,11 @@ async function main() {
   const afterUncheck = env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings());
   check('再点一次取消勾选', afterUncheck.selectedCards === 0, String(afterUncheck.selectedCards));
 
-  // 回目级勾选
+  // 主题级勾选
   const chapterBox = findToggles(chapterRows()[0])[0];
   clickCheckbox(chapterBox);
   const afterChapter = env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings());
-  check('点回目勾选框勾上该回目', afterChapter.selectedLeaves === 1 && afterChapter.selectedCards > 0,
+  check('点主题勾选框勾上该主题', afterChapter.selectedLeaves === 1 && afterChapter.selectedCards > 0,
     afterChapter.selectedLeaves + '/' + afterChapter.selectedCards);
   // 只勾了一部分时，父级（分类 / 卡组）应显示为三态 partial
   const deckBoxPartial = findToggles(deckRows()[0])[0];
@@ -716,9 +737,9 @@ async function main() {
   clickCheckbox(findToggles(deckRows()[0])[0]);
   check('全选框再点一下变全不选',
     env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards === 0);
-  // 收起来再展开，勾选状态要留着：先勾上一个回目，再收起 / 展开
+  // 收起来再展开，勾选状态要留着：先勾上一个主题，再收起 / 展开
   clickCheckbox(findToggles(chapterRows()[0])[0]);
-  check('重新勾上一个回目',
+  check('重新勾上一个主题',
     env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedLeaves === 1);
   const deckRow2 = deckRows()[0];
   deckRow2.dispatch('click', { type: 'click', target: deckRow2, stopPropagation() {}, preventDefault() {} });
@@ -761,7 +782,7 @@ async function main() {
     deckCountCollapsed && deckCountCollapsed.textContent === '0张/138张',
     deckCountCollapsed && deckCountCollapsed.textContent);
 
-  // 展开后检查分类行与回目行
+  // 展开后检查分类行与主题行
   const rowToExpand = deckRows()[0];
   rowToExpand.dispatch('click', { type: 'click', target: rowToExpand, stopPropagation() {}, preventDefault() {} });
   const categoryCounts = [];
@@ -784,11 +805,11 @@ async function main() {
       if (count) chapterCounts.push(count.textContent);
     }
   });
-  check('回目行计数都是「x张/x张」',
+  check('主题行计数都是「x张/x张」',
     chapterCounts.length > 0 && chapterCounts.every((text) => /^\d+张\/\d+张$/.test(text)),
     chapterCounts.slice(0, 3).join(' | '));
 
-  // 勾上一个回目后，各级计数应同步变化（选中数跟着张数走，不是回目数）
+  // 勾上一个主题后，各级计数应同步变化（选中数跟着张数走，不是主题数）
   const firstChapterRow = chapterRows()[0];
   clickCheckbox(findToggles(firstChapterRow)[0]);
   const selectedCards = env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards;
@@ -822,8 +843,8 @@ async function main() {
     type: '测试 / 导入',
     deck: '新卡组',
     category: '现实类',
-    chapter: '第一回',
-    rel: '新卡组/现实类/第一回/X1-01-试作卡',
+    chapter: '市井生计',
+    rel: '现实类/新卡组/市井生计/X1-01-试作卡',
     face: '这是导入进来的试作卡卡面。',
     notes: '**合理化**：测试用。',
     noteItems: [{ key: '合理化', value: '测试用。' }],
@@ -851,11 +872,11 @@ async function main() {
   check('覆盖后总数仍是 139', env.sandbox.scGetLibrary().length === 139,
     String(env.sandbox.scGetLibrary().length));
 
-  // 缺层级字段：兜底到未分组 / 未分类 / 未分回，而不是被丢弃
+  // 缺层级字段：兜底到未分组 / 未分类 / 未分主题，而不是被丢弃
   const bareResult = env.sandbox.scImportCardsFromText(JSON.stringify({ cards: [{ id: 'bare-1', name: '光板卡' }] }));
   const bareCard = env.sandbox.scGetLibrary().find((card) => card.id === 'bare-1');
   check('缺层级字段的卡归到未分组', bareResult.ok && bareCard
-    && bareCard.deck === '未分组' && bareCard.category === '未分类' && bareCard.chapter === '未分回',
+    && bareCard.deck === '未分组' && bareCard.category === '未分类' && bareCard.chapter === '未分主题',
     bareCard && [bareCard.deck, bareCard.category, bareCard.chapter].join('/'));
   check('层级兜底后总数 = 140', env.sandbox.scGetLibrary().length === 140,
     String(env.sandbox.scGetLibrary().length));
@@ -874,7 +895,7 @@ async function main() {
   // 导入的卡能正常参与抽卡与注入
   const loadSettings = env.sandbox.scGetSettings();
   loadSettings.selectedLeaves = {};
-  env.sandbox.scSetLeafSelected(loadSettings, '新卡组', '现实类', '第一回', true);
+  env.sandbox.scSetLeafSelected(loadSettings, '新卡组', '现实类', '市井生计', true);
   const loadDraw = env.sandbox.scDrawCard(loadSettings, 'load-chat');
   check('能在新卡组范围里抽到导入的卡', loadDraw.card && loadDraw.card.id === 'X1-01-试作卡',
     loadDraw.card && loadDraw.card.id);
@@ -1123,30 +1144,30 @@ async function main() {
     tauri.sandbox.scFindSettingsStore(tauri.sandbox.SillyTavern.getContext()) === tauriHost.extensionSettings);
   check('找不到设置容器时返回 null', tauri.sandbox.scFindSettingsStore({}) === null);
 
-  // 勾一个回目：写入必须落在宿主共享的 extensionSettings 上，
+  // 勾一个主题：写入必须落在宿主共享的 extensionSettings 上，
   // 否则下次渲染读到的是空对象，界面看起来「点了没反应」。
   const tauriSettings = tauri.sandbox.scGetSettings();
-  tauri.sandbox.scSetLeafSelected(tauriSettings, '红楼梦', '奇幻类', '第一回', true);
+  tauri.sandbox.scSetLeafSelected(tauriSettings, '红楼梦', '奇幻类', '丧葬礼仪', true);
   tauri.sandbox.scSaveSettings();
   check('设置写进了宿主共享的 extensionSettings',
     Boolean(tauriHost.extensionSettings.storyCards));
   check('重新读取设置仍能拿到同一份勾选',
-    tauri.sandbox.scIsLeafSelected(tauri.sandbox.scGetSettings(), '红楼梦', '奇幻类', '第一回') === true);
+    tauri.sandbox.scIsLeafSelected(tauri.sandbox.scGetSettings(), '红楼梦', '奇幻类', '丧葬礼仪') === true);
 
   // 走真实渲染 + 点击路径：必须重渲染成新状态。
   tauri.sandbox.scOpenPanel();
   const tauriTree = tauri.document.getElementById('sc-scope-tree');
   const tauriDeckRow = tauriTree.children[0];
   const tauriBox = findToggles(tauriDeckRow)[0];
-  check('驼峰设置下勾选框渲染为 partial（只勾了一回）',
+  check('驼峰设置下勾选框渲染为 partial（只勾了一个主题）',
     tauriBox && tauriBox.dataset.state === 'partial', tauriBox && tauriBox.dataset.state);
   clickCheckbox(tauriBox);
   const tauriDeckBoxAfter = findToggles(tauriTree.children[0])[0];
   check('点一下后卡组框变成全选', tauriDeckBoxAfter && tauriDeckBoxAfter.dataset.state === 'all',
     tauriDeckBoxAfter && tauriDeckBoxAfter.dataset.state);
-  check('点一下后设置里 27 个回目全勾上',
+  check('点一下后设置里 11 个主题全勾上',
     Object.values((tauriHost.extensionSettings.storyCards.selectedLeaves['红楼梦'] || {})).reduce(
-      (sum, chapters) => sum + Object.keys(chapters).length, 0) === 27);
+      (sum, chapters) => sum + Object.keys(chapters).length, 0) === 11);
 
   // ---------- 汇总 ----------
   console.log('\n============================');

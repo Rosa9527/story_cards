@@ -23,7 +23,7 @@ function scReadFileText(file) {
   });
 }
 
-// 把导入的条目补成完整卡：缺卡组 / 分类 / 回目的归到「未分组」这类兜底，
+// 把导入的条目补成完整卡：缺卡组 / 分类 / 主题的归到「未分组」这类兜底，
 // 缺 id 的用卡号或卡名顶上。真正写库前的字段校验仍在 scNormalizeCard 里。
 function scPrepareImportedCard(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -39,7 +39,7 @@ function scPrepareImportedCard(raw) {
     type: raw.type,
     deck: pick(raw.deck, '未分组'),
     category: pick(raw.category, '未分类'),
-    chapter: pick(raw.chapter, '未分回'),
+    chapter: pick(raw.chapter, '未分主题'),
     rel: raw.rel,
     face: raw.face,
     notes: raw.notes,

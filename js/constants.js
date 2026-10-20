@@ -31,8 +31,8 @@ const SC_SETTINGS_NAMESPACE = 'storyCards';
 const SC_FALLBACK_SETTINGS_KEY = '__sc_fallback_settings__';
 
 const SC_DEFAULT_SETTINGS = Object.freeze({
-  // 已勾选的抽卡范围：{ [卡组]: { [分类]: { [回目]: true } } }
-  // 只记录被勾上的叶子（回目）；卡组 / 分类的勾选状态由叶子推导，避免三处状态打架。
+  // 已勾选的抽卡范围：{ [卡组]: { [分类]: { [主题]: true } } }
+  // 只记录被勾上的叶子（主题）；卡组 / 分类的勾选状态由叶子推导，避免三处状态打架。
   selectedLeaves: {},
   // 悬浮按钮开关（手机端面板入口）。
   showFloatingButton: true,

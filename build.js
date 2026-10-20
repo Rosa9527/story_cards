@@ -1,6 +1,6 @@
 // ===== 剧情抽卡（Story Cards）构建脚本 =====
 // 职责：
-//   1. 扫描 cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md，解析成卡库数据；
+//   1. 扫描 cards/<分类>/<卡组>/<主题>/<卡号>-<卡名>.md，解析成卡库数据；
 //   2. 生成 js/cards-data.js（卡库数据源，勿手改）；
 //   3. 把 js/ 下的源码按依赖顺序拼接成宿主加载的单文件 index.js。
 //
@@ -74,7 +74,8 @@ function walkCards(dir, prefix, out) {
   return out;
 }
 
-// 回目排序：从「第一回」「第十七回」里取中文数字，按数值排；取不到时退回原串比较。
+// 主题排序：名字里带中文数字的（如「第一回」）按数值排，其余退回原串比较。
+// 现在的主题名一般不带数字，这段主要是给从旧结构导入的卡兜底。
 const CN_DIGITS = { 〇: 0, 零: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
 function chineseNumberToInt(text) {
   const raw = String(text || '').replace(/[^〇零一二三四五六七八九十百]/g, '');
@@ -107,15 +108,16 @@ function buildCardsData() {
   const skipped = [];
   for (const item of found) {
     const parts = item.parts;
-    // 目录层级不足（卡组/分类/回目/文件）时跳过，避免把随手放的说明文件当卡。
+    // 目录层级不足（分类/卡组/主题/文件）时跳过，避免把随手放的说明文件当卡。
     if (parts.length < 4) {
       skipped.push(parts.join('/'));
       continue;
     }
     const fileName = parts[parts.length - 1];
-    const chapter = parts[parts.length - 2];
-    const category = parts[parts.length - 3];
-    const deck = parts[0];
+    // 目录结构：cards/<分类>/<卡组>/<主题>/<卡号>-<卡名>.md
+    const category = parts[0];
+    const deck = parts[1];
+    const chapter = parts[2];
     const stem = fileName.replace(/\.md$/i, '');
     let text = '';
     try {
@@ -163,7 +165,7 @@ function renderCardsData(cards) {
   const header = [
     '// ===== 剧情抽卡（Story Cards）卡库数据 · 构建产物，勿手改 =====',
     `// 生成时间: ${stamp} · 卡牌数: ${cards.length}`,
-    '// 来源: cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md',
+    '// 来源: cards/<分类>/<卡组>/<主题>/<卡号>-<卡名>.md',
     '// 重新生成: node build.js（或 node build.js --cards）',
     '// 卡面解析规则见 tools/card-parse.js（构建期使用）。',
   ].join('\n');

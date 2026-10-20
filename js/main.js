@@ -169,6 +169,9 @@ async function scBootstrap() {
     scRefreshCardStatus();
     scCreateFloatingButton();
     scApplyFloatingButtonVisibility();
+    // 卡库可能在扩展没跑的时候换过（改目录结构 / 换卡组），把对不上的旧勾选清掉，
+    // 否则范围看着是「勾了」却一张也抽不到。
+    scPruneStaleSelection(scGetSettings());
     scRefreshSummary();
     await scRegisterMenuItem();
     scLogInfo(`扩展就绪 v${SC_MODULE_VERSION}（卡库 ${scGetLibrary().length} 张）`);

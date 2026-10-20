@@ -97,7 +97,7 @@ function scCreatePanel() {
   body.appendChild(cardSection);
 
   const scopeTitle = scCreate('div', 'sc-panel__section-title', '抽卡范围');
-  const scopeHint = scCreate('div', 'sc-panel__hint', '勾选要抽的回目（可多选，父级勾选即整片勾上）。一个都不勾 = 全库随机。');
+  const scopeHint = scCreate('div', 'sc-panel__hint', '勾选要抽的主题（可多选，父级勾选即整片勾上）。一个都不勾 = 全库随机。');
   const tree = scCreate('div', 'sc-tree');
   tree.id = SC_SCOPE_TREE_ID;
   body.appendChild(scopeTitle);
@@ -470,7 +470,7 @@ function scRenderScopeTree() {
   tree.textContent = '';
 
   if (scopeTree.length === 0) {
-    const empty = scCreate('div', 'sc-tree__empty', '卡库是空的。点上面「导入卡片」选一个卡牌 .json 文件，或把卡牌放进 cards/<卡组>/<分类>/<回目>/ 后运行 node build.js。');
+    const empty = scCreate('div', 'sc-tree__empty', '卡库是空的。点上面「导入卡片」选一个卡牌 .json 文件，或把卡牌放进 cards/<分类>/<卡组>/<主题>/ 后运行 node build.js。');
     tree.appendChild(empty);
     scRefreshSummary();
     return;
@@ -544,7 +544,7 @@ function scRenderScopeTree() {
               scSaveSettings();
               scRenderScopeTree();
             },
-            `回目 ${chapter.name}`,
+            `主题 ${chapter.name}`,
           );
           const chapterLabel = scCreate('span', 'sc-tree__label', chapter.name);
           const chapterSelected = scIsLeafSelected(settings, deck.name, category.name, chapter.name);

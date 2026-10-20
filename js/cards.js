@@ -91,14 +91,14 @@ function scAddCustomCards(cards) {
 }
 
 // ---------- 范围树 ----------
-// 三层：卡组 → 分类 → 回目。每个节点带 own 张数与含子树的 total 张数，
+// 三层：卡组 → 分类 → 主题。每个节点带 own 张数与含子树的 total 张数，
 // 供 UI 显示「红楼梦（138）」这类计数，也让玩家知道勾完能抽到多少张。
 function scBuildScopeTree() {
   const decks = new Map();
   for (const card of scGetLibrary()) {
     const deckName = String(card.deck || '未分组');
     const categoryName = String(card.category || '未分类');
-    const chapterName = String(card.chapter || '未分回');
+    const chapterName = String(card.chapter || '未分主题');
     if (!decks.has(deckName)) decks.set(deckName, { name: deckName, total: 0, categories: new Map() });
     const deck = decks.get(deckName);
     if (!deck.categories.has(categoryName)) deck.categories.set(categoryName, { name: categoryName, total: 0, chapters: new Map() });
@@ -121,12 +121,12 @@ function scBuildScopeTree() {
   }));
 }
 
-// 叶子键：卡组 / 分类 / 回目 三段拼成稳定字符串，作为 selectedLeaves 的键。
+// 叶子键：卡组 / 分类 / 主题 三段拼成稳定字符串，作为 selectedLeaves 的键。
 function scLeafKey(deck, category, chapter) {
   return [deck, category, chapter].map((part) => String(part == null ? '' : part)).join('\u0001');
 }
 
-// 一个叶子（回目）是否被勾选。
+// 一个叶子（主题）是否被勾选。
 function scIsLeafSelected(settings, deck, category, chapter) {
   const deckSel = settings.selectedLeaves?.[deck];
   const categorySel = deckSel?.[category];
@@ -187,7 +187,7 @@ function scSummarizeSelection(settings) {
 }
 
 // ---------- 抽卡范围 ----------
-// 勾了回目 → 只在这些回目里抽；一个都没勾 → 全库随机（并提示玩家）。
+// 勾了主题 → 只在这些主题里抽；一个都没勾 → 全库随机（并提示玩家）。
 function scFilterBySelection(settings) {
   const library = scGetLibrary();
   const anyLeaf = Object.values(settings.selectedLeaves || {}).some(
@@ -196,6 +196,46 @@ function scFilterBySelection(settings) {
   if (!anyLeaf) return { cards: library.slice(), unrestricted: true };
   const cards = library.filter((card) => scIsLeafSelected(settings, card.deck, card.category, card.chapter));
   return { cards, unrestricted: false };
+}
+
+// 清掉已经不存在于当前卡库的勾选（换卡库 / 目录结构改版后留下的旧键）。
+// 不清的话，旧键会让「有没有勾选」判定为真，但筛出来 0 张卡，抽卡直接失效；
+// 而且在同一个键重新出现之前，玩家看到的都是一片勾不中任何东西的空范围。
+// 返回清掉的叶子数。只在真的有变化时写盘。
+function scPruneStaleSelection(settings) {
+  const leaves = settings.selectedLeaves;
+  if (!leaves || typeof leaves !== 'object') return 0;
+  const tree = scBuildScopeTree();
+  let removed = 0;
+  for (const deck of tree) {
+    const deckSel = leaves[deck.name];
+    if (!deckSel || typeof deckSel !== 'object') continue;
+    for (const category of deck.categories) {
+      const categorySel = deckSel[category.name];
+      if (!categorySel || typeof categorySel !== 'object') continue;
+      const valid = new Set(category.chapters.map((chapter) => chapter.name));
+      for (const chapterName of Object.keys(categorySel)) {
+        if (!valid.has(chapterName)) {
+          delete categorySel[chapterName];
+          removed += 1;
+        }
+      }
+      if (Object.keys(categorySel).length === 0) delete deckSel[category.name];
+    }
+    if (Object.keys(deckSel).length === 0) delete leaves[deck.name];
+  }
+  // 卡组 / 分类整块都已不存在的旧键也一并清掉。
+  const deckNames = new Set(tree.map((deck) => deck.name));
+  for (const deckName of Object.keys(leaves)) {
+    if (!deckNames.has(deckName)) {
+      removed += Object.values(leaves[deckName] || {}).reduce(
+        (sum, categories) => sum + Object.keys(categories || {}).length, 0,
+      );
+      delete leaves[deckName];
+    }
+  }
+  if (removed > 0) scSaveSettings();
+  return removed;
 }
 
 // ---------- 抽过不重复 ----------
