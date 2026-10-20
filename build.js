@@ -95,7 +95,7 @@ function chineseNumberToInt(text) {
   return seen ? total + section : null;
 }
 
-// 卡号排序：C1-03 / F16-01 里的「分类字母 + 回次 + 序号」。
+// 卡号排序：C1-03 / F16-01 里的「分类字母 + 回次 + 序号」（卡号自带回次编号，保留原义）。
 function cardSortKey(card) {
   const match = String(card.number || card.id || '').match(/^([A-Za-z]*)(\d+)(?:-(\d+))?/);
   if (!match) return [1, 0, 0, String(card.id || '')];
@@ -141,9 +141,10 @@ function buildCardsData() {
       noteItems: parsed.noteItems,
     });
   }
+  // 排序与目录一致：分类 → 卡组 → 主题 → 卡号。
   cards.sort((a, b) => {
-    if (a.deck !== b.deck) return a.deck < b.deck ? -1 : 1;
     if (a.category !== b.category) return a.category < b.category ? -1 : 1;
+    if (a.deck !== b.deck) return a.deck < b.deck ? -1 : 1;
     const ca = chineseNumberToInt(a.chapter);
     const cb = chineseNumberToInt(b.chapter);
     if (ca !== null && cb !== null && ca !== cb) return ca - cb;
@@ -180,7 +181,7 @@ function writeCardsData() {
   const decks = new Set(cards.map((card) => card.deck));
   console.log(`[build] 卡库已生成：${cards.length} 张，卡组 ${decks.size} 个 → js/cards-data.js`);
   if (skipped.length) {
-    console.warn(`[build] 跳过 ${skipped.length} 个不符合 卡组/分类/回目/文件 层级的文件：`);
+    console.warn(`[build] 跳过 ${skipped.length} 个不符合 分类/卡组/主题/文件 层级的文件：`);
     for (const item of skipped.slice(0, 10)) console.warn('        ' + item);
   }
   return cards.length;
@@ -272,7 +273,7 @@ function emitToStdout() {
     STDOUT_MARK_INDEX, indexText,
     STDOUT_MARK_END, '',
   ].join('\n'));
-  if (skipped.length) console.error(`[build] 跳过 ${skipped.length} 个不符合 卡组/分类/回目/文件 层级的文件`);
+  if (skipped.length) console.error(`[build] 跳过 ${skipped.length} 个不符合 分类/卡组/主题/文件 层级的文件`);
   console.error(`[build] --stdout 已输出：卡库 ${cards.length} 张 + index.js（${indexText.split('\n').length} 行）`);
 }
 

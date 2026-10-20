@@ -1,5 +1,5 @@
 // ===== 剧情抽卡（Story Cards）index.js — 构建产物，勿手改 =====
-// 构建时间: 2026-10-20 14:19:21 · 文件数: 10 · 指纹: 1c482803
+// 构建时间: 2026-10-20 14:33:09 · 文件数: 10 · 指纹: 091ca948
 
 // ===== js/constants.js =====
 // ===== 剧情抽卡（Story Cards）全局常量 =====
@@ -400,7 +400,7 @@ function scGetChatLength() {
 
 // ===== js/cards-data.js =====
 // ===== 剧情抽卡（Story Cards）卡库数据 · 构建产物，勿手改 =====
-// 生成时间: 2026-10-20 14:19:21 · 卡牌数: 138
+// 生成时间: 2026-10-20 14:33:09 · 卡牌数: 138
 // 来源: cards/<分类>/<卡组>/<主题>/<卡号>-<卡名>.md
 // 重新生成: node build.js（或 node build.js --cards）
 // 卡面解析规则见 tools/card-parse.js（构建期使用）。
@@ -7306,69 +7306,71 @@ function scAddCustomCards(cards) {
 }
 
 // ---------- 范围树 ----------
-// 三层：卡组 → 分类 → 主题。每个节点带 own 张数与含子树的 total 张数，
-// 供 UI 显示「红楼梦（138）」这类计数，也让玩家知道勾完能抽到多少张。
+// 三层：分类 → 卡组 → 主题，与 cards/<分类>/<卡组>/<主题>/ 目录一一对应。
+// 每个节点带含子树的 total 张数，供 UI 显示「奇幻类 7张/7张」这类计数，
+// 也让玩家知道勾完能抽到多少张。
 function scBuildScopeTree() {
-  const decks = new Map();
+  const categories = new Map();
   for (const card of scGetLibrary()) {
-    const deckName = String(card.deck || '未分组');
     const categoryName = String(card.category || '未分类');
+    const deckName = String(card.deck || '未分组');
     const chapterName = String(card.chapter || '未分主题');
-    if (!decks.has(deckName)) decks.set(deckName, { name: deckName, total: 0, categories: new Map() });
-    const deck = decks.get(deckName);
-    if (!deck.categories.has(categoryName)) deck.categories.set(categoryName, { name: categoryName, total: 0, chapters: new Map() });
-    const category = deck.categories.get(categoryName);
-    if (!category.chapters.has(chapterName)) category.chapters.set(chapterName, { name: chapterName, total: 0, cards: [] });
-    const chapter = category.chapters.get(chapterName);
+    if (!categories.has(categoryName)) categories.set(categoryName, { name: categoryName, total: 0, decks: new Map() });
+    const category = categories.get(categoryName);
+    if (!category.decks.has(deckName)) category.decks.set(deckName, { name: deckName, total: 0, chapters: new Map() });
+    const deck = category.decks.get(deckName);
+    if (!deck.chapters.has(chapterName)) deck.chapters.set(chapterName, { name: chapterName, total: 0, cards: [] });
+    const chapter = deck.chapters.get(chapterName);
     chapter.cards.push(card);
     chapter.total += 1;
-    category.total += 1;
     deck.total += 1;
+    category.total += 1;
   }
-  return Array.from(decks.values()).map((deck) => ({
-    name: deck.name,
-    total: deck.total,
-    categories: Array.from(deck.categories.values()).map((category) => ({
-      name: category.name,
-      total: category.total,
-      chapters: Array.from(category.chapters.values()),
+  return Array.from(categories.values()).map((category) => ({
+    name: category.name,
+    total: category.total,
+    decks: Array.from(category.decks.values()).map((deck) => ({
+      name: deck.name,
+      total: deck.total,
+      chapters: Array.from(deck.chapters.values()),
     })),
   }));
 }
 
-// 叶子键：卡组 / 分类 / 主题 三段拼成稳定字符串，作为 selectedLeaves 的键。
-function scLeafKey(deck, category, chapter) {
-  return [deck, category, chapter].map((part) => String(part == null ? '' : part)).join('\u0001');
+// 叶子键：分类 / 卡组 / 主题 三段拼成稳定字符串，作为 selectedLeaves 的键。
+// 嵌套顺序与目录一致：{ 分类: { 卡组: { 主题: true } } }。
+function scLeafKey(category, deck, chapter) {
+  return [category, deck, chapter].map((part) => String(part == null ? '' : part)).join('\u0001');
 }
 
 // 一个叶子（主题）是否被勾选。
-function scIsLeafSelected(settings, deck, category, chapter) {
-  const deckSel = settings.selectedLeaves?.[deck];
-  const categorySel = deckSel?.[category];
-  return Boolean(categorySel && categorySel[chapter]);
+function scIsLeafSelected(settings, category, deck, chapter) {
+  const categorySel = settings.selectedLeaves?.[category];
+  const deckSel = categorySel?.[deck];
+  return Boolean(deckSel && deckSel[chapter]);
 }
 
 // 勾选 / 取消一个叶子。
-function scSetLeafSelected(settings, deck, category, chapter, selected) {
+function scSetLeafSelected(settings, category, deck, chapter, selected) {
   if (!settings.selectedLeaves || typeof settings.selectedLeaves !== 'object') settings.selectedLeaves = {};
   const leaves = settings.selectedLeaves;
   if (selected) {
-    if (!leaves[deck]) leaves[deck] = {};
-    if (!leaves[deck][category]) leaves[deck][category] = {};
-    leaves[deck][category][chapter] = true;
+    if (!leaves[category]) leaves[category] = {};
+    if (!leaves[category][deck]) leaves[category][deck] = {};
+    leaves[category][deck][chapter] = true;
     return;
   }
-  if (leaves[deck]?.[category]) {
-    delete leaves[deck][category][chapter];
-    if (Object.keys(leaves[deck][category]).length === 0) delete leaves[deck][category];
-    if (Object.keys(leaves[deck]).length === 0) delete leaves[deck];
+  if (leaves[category]?.[deck]) {
+    delete leaves[category][deck][chapter];
+    if (Object.keys(leaves[category][deck]).length === 0) delete leaves[category][deck];
+    if (Object.keys(leaves[category]).length === 0) delete leaves[category];
   }
 }
 
 // 节点级批量勾选 / 取消：把子树里所有叶子一起改。
-function scSetSubtreeSelected(settings, deck, category, chapters, selected) {
+function scSetSubtreeSelected(settings, category, deck, chapters, selected) {
   for (const chapter of chapters) {
-    scSetLeafSelected(settings, deck, category, chapter, selected);
+    scSetLeafSelected(settings, category, deck, chapter, selected);
   }
 }
 
@@ -7386,12 +7388,12 @@ function scSummarizeSelection(settings) {
   let totalCards = 0;
   let selectedLeaves = 0;
   let totalLeaves = 0;
-  for (const deck of tree) {
-    for (const category of deck.categories) {
-      for (const chapter of category.chapters) {
+  for (const category of tree) {
+    for (const deck of category.decks) {
+      for (const chapter of deck.chapters) {
         totalLeaves += 1;
         totalCards += chapter.total;
-        if (scIsLeafSelected(settings, deck.name, category.name, chapter.name)) {
+        if (scIsLeafSelected(settings, category.name, deck.name, chapter.name)) {
           selectedLeaves += 1;
           selectedCards += chapter.total;
         }
@@ -7406,10 +7408,10 @@ function scSummarizeSelection(settings) {
 function scFilterBySelection(settings) {
   const library = scGetLibrary();
   const anyLeaf = Object.values(settings.selectedLeaves || {}).some(
-    (categories) => Object.values(categories || {}).some((chapters) => Object.keys(chapters || {}).length > 0),
+    (decks) => Object.values(decks || {}).some((chapters) => Object.keys(chapters || {}).length > 0),
   );
   if (!anyLeaf) return { cards: library.slice(), unrestricted: true };
-  const cards = library.filter((card) => scIsLeafSelected(settings, card.deck, card.category, card.chapter));
+  const cards = library.filter((card) => scIsLeafSelected(settings, card.category, card.deck, card.chapter));
   return { cards, unrestricted: false };
 }
 
@@ -7422,31 +7424,31 @@ function scPruneStaleSelection(settings) {
   if (!leaves || typeof leaves !== 'object') return 0;
   const tree = scBuildScopeTree();
   let removed = 0;
-  for (const deck of tree) {
-    const deckSel = leaves[deck.name];
-    if (!deckSel || typeof deckSel !== 'object') continue;
-    for (const category of deck.categories) {
-      const categorySel = deckSel[category.name];
-      if (!categorySel || typeof categorySel !== 'object') continue;
-      const valid = new Set(category.chapters.map((chapter) => chapter.name));
-      for (const chapterName of Object.keys(categorySel)) {
+  for (const category of tree) {
+    const categorySel = leaves[category.name];
+    if (!categorySel || typeof categorySel !== 'object') continue;
+    for (const deck of category.decks) {
+      const deckSel = categorySel[deck.name];
+      if (!deckSel || typeof deckSel !== 'object') continue;
+      const valid = new Set(deck.chapters.map((chapter) => chapter.name));
+      for (const chapterName of Object.keys(deckSel)) {
         if (!valid.has(chapterName)) {
-          delete categorySel[chapterName];
+          delete deckSel[chapterName];
           removed += 1;
         }
       }
-      if (Object.keys(categorySel).length === 0) delete deckSel[category.name];
+      if (Object.keys(deckSel).length === 0) delete categorySel[deck.name];
     }
-    if (Object.keys(deckSel).length === 0) delete leaves[deck.name];
+    if (Object.keys(categorySel).length === 0) delete leaves[category.name];
   }
-  // 卡组 / 分类整块都已不存在的旧键也一并清掉。
-  const deckNames = new Set(tree.map((deck) => deck.name));
-  for (const deckName of Object.keys(leaves)) {
-    if (!deckNames.has(deckName)) {
-      removed += Object.values(leaves[deckName] || {}).reduce(
-        (sum, categories) => sum + Object.keys(categories || {}).length, 0,
+  // 分类 / 卡组整块都已不存在的旧键也一并清掉。
+  const categoryNames = new Set(tree.map((category) => category.name));
+  for (const categoryName of Object.keys(leaves)) {
+    if (!categoryNames.has(categoryName)) {
+      removed += Object.values(leaves[categoryName] || {}).reduce(
+        (sum, decks) => sum + Object.keys(decks || {}).length, 0,
       );
-      delete leaves[deckName];
+      delete leaves[categoryName];
     }
   }
   if (removed > 0) scSaveSettings();
@@ -8107,7 +8109,15 @@ async function scFillAndSend(triggerText) {
 // 面板刻意做小：选范围 → 点抽卡 → 看结果。抽到就立刻填输入框并发出去。
 
 // 展开态是纯 UI 状态，不进设置：重渲染（勾选变化触发）时保持玩家的展开/收起。
+// 两层都能展开：顶层是分类（与 cards/<分类>/... 对应），第二层是卡组。
+const scExpandedCategories = new Set();
 const scExpandedDecks = new Set();
+
+function scToggleCategoryExpanded(categoryName) {
+  if (scExpandedCategories.has(categoryName)) scExpandedCategories.delete(categoryName);
+  else scExpandedCategories.add(categoryName);
+  scRenderScopeTree();
+}
 
 function scToggleDeckExpanded(deckName) {
   if (scExpandedDecks.has(deckName)) scExpandedDecks.delete(deckName);
@@ -8121,6 +8131,18 @@ function scIsInteractiveTarget(event) {
   const target = event && event.target;
   if (!target || typeof target.closest !== 'function') return false;
   return Boolean(target.closest('input, button, select, textarea, a, label'));
+}
+
+// 点击是否来自某个嵌套块内部（沿 target 往上走，遇到 stopNode 之前先碰到 cls 块）。
+// 用来阻止「点卡组行连带把外层分类也收起」：分类块的监听器会收到冒泡上来的点击，
+// 但只要这次点击本来就在某个卡组块里，就该交给卡组块处理。
+function scClickInsideBlock(target, stopNode, cls) {
+  let node = target;
+  while (node && node !== stopNode) {
+    if (node.classList && node.classList.contains(cls)) return true;
+    node = node.parentNode;
+  }
+  return false;
 }
 
 function scIsPanelOpen() {
@@ -8554,14 +8576,33 @@ function scBuildCheckbox(state, onToggle, ariaLabel) {
   return wrap;
 }
 
+// 展开箭头：可点（stopPropagation，避免连带触发整块的展开/收起）。
+function scBuildCaret(expanded, onToggle) {
+  const caret = scCreate('button', 'sc-tree__caret', expanded ? '▾' : '▸');
+  caret.type = 'button';
+  caret.setAttribute('aria-label', expanded ? '收起' : '展开');
+  caret.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onToggle();
+  });
+  return caret;
+}
+
+// 主题行没有子级，占一个和箭头等宽的空位，让勾选框与上层对齐。
+function scBuildCaretSpacer() {
+  const spacer = scCreate('span', 'sc-tree__caret-spacer');
+  spacer.setAttribute('aria-hidden', 'true');
+  return spacer;
+}
+
 // 统计子树里被勾选的张数与总张数。
-function scCountSubtree(settings, deckName, categories) {
+function scCountSubtree(settings, categoryName, decks) {
   let selected = 0;
   let total = 0;
-  for (const category of categories) {
-    for (const chapter of category.chapters) {
+  for (const deck of decks) {
+    for (const chapter of deck.chapters) {
       total += chapter.total;
-      if (scIsLeafSelected(settings, deckName, category.name, chapter.name)) selected += chapter.total;
+      if (scIsLeafSelected(settings, categoryName, deck.name, chapter.name)) selected += chapter.total;
     }
   }
   return { selected, total };
@@ -8582,89 +8623,98 @@ function scRenderScopeTree() {
   }
 
   // 默认全部收起，由玩家自己点开（展开态只活在本次会话里）。
-  for (const deck of scopeTree) {
-    const deckNode = scCreate('div', 'sc-tree__deck');
-    const deckRow = scCreate('div', 'sc-tree__row sc-tree__row--deck');
-    const expanded = scExpandedDecks.has(deck.name);
-    const caret = scCreate('button', 'sc-tree__caret', expanded ? '▾' : '▸');
-    caret.type = 'button';
-    caret.setAttribute('aria-label', expanded ? '收起' : '展开');
-    caret.addEventListener('click', (event) => {
-      event.stopPropagation();
-      scToggleDeckExpanded(deck.name);
-    });
-    const deckStats = scCountSubtree(settings, deck.name, deck.categories);
-    const deckBox = scBuildCheckbox(
-      scSelectionState(deckStats.selected, deckStats.total),
+  // 三层与目录一致：分类 → 卡组 → 主题。
+  for (const category of scopeTree) {
+    const categoryNode = scCreate('div', 'sc-tree__category');
+    const categoryRow = scCreate('div', 'sc-tree__row sc-tree__row--category');
+    const categoryExpanded = scExpandedCategories.has(category.name);
+    const categoryCaret = scBuildCaret(categoryExpanded, () => scToggleCategoryExpanded(category.name));
+    const categoryStats = scCountSubtree(settings, category.name, category.decks);
+    const categoryBox = scBuildCheckbox(
+      scSelectionState(categoryStats.selected, categoryStats.total),
       (checked) => {
-        for (const category of deck.categories) {
-          scSetSubtreeSelected(settings, deck.name, category.name, category.chapters.map((chapter) => chapter.name), checked);
+        for (const deck of category.decks) {
+          scSetSubtreeSelected(settings, category.name, deck.name, deck.chapters.map((chapter) => chapter.name), checked);
         }
         scSaveSettings();
         scRenderScopeTree();
       },
-      `卡组 ${deck.name}`,
+      `分类 ${category.name}`,
     );
-    const deckLabel = scCreate('span', 'sc-tree__label', `${deck.name}`);
-    const deckCount = scCreate('span', 'sc-tree__count', `${deckStats.selected}张/${deckStats.total}张`);
-    deckRow.appendChild(caret);
-    deckRow.appendChild(deckBox);
-    deckRow.appendChild(deckLabel);
-    deckRow.appendChild(deckCount);
+    const categoryLabel = scCreate('span', 'sc-tree__label', `${category.name}`);
+    const categoryCount = scCreate('span', 'sc-tree__count', `${categoryStats.selected}张/${categoryStats.total}张`);
+    categoryRow.appendChild(categoryCaret);
+    categoryRow.appendChild(categoryBox);
+    categoryRow.appendChild(categoryLabel);
+    categoryRow.appendChild(categoryCount);
     // 监听挂在「整块」上而不是行上：行只占内容宽度，挂在行上会让右侧空白点不动。
     // 点在勾选框 / 展开箭头这类控件上时不重复触发（勾选框自己也会 stopPropagation）。
-    deckNode.addEventListener('click', (event) => {
+    categoryNode.addEventListener('click', (event) => {
       if (scIsInteractiveTarget(event)) return;
-      scToggleDeckExpanded(deck.name);
+      // 点在展开出来的卡组块里时，交给卡组自己的监听器处理，别连带收起整个分类。
+      if (scClickInsideBlock(event.target, categoryNode, 'sc-tree__deck')) return;
+      scToggleCategoryExpanded(category.name);
     });
-    deckNode.appendChild(deckRow);
+    categoryNode.appendChild(categoryRow);
 
-    if (expanded) {
-      for (const category of deck.categories) {
-        const categoryNode = scCreate('div', 'sc-tree__category');
-        const categoryRow = scCreate('div', 'sc-tree__row sc-tree__row--category');
-        const categoryStats = scCountSubtree(settings, deck.name, [category]);
-        const categoryBox = scBuildCheckbox(
-          scSelectionState(categoryStats.selected, categoryStats.total),
+    if (categoryExpanded) {
+      for (const deck of category.decks) {
+        const deckNode = scCreate('div', 'sc-tree__deck');
+        const deckRow = scCreate('div', 'sc-tree__row sc-tree__row--deck');
+        const deckExpanded = scExpandedDecks.has(deck.name);
+        const deckCaret = scBuildCaret(deckExpanded, () => scToggleDeckExpanded(deck.name));
+        const deckStats = scCountSubtree(settings, category.name, [deck]);
+        const deckBox = scBuildCheckbox(
+          scSelectionState(deckStats.selected, deckStats.total),
           (checked) => {
-            scSetSubtreeSelected(settings, deck.name, category.name, category.chapters.map((chapter) => chapter.name), checked);
+            scSetSubtreeSelected(settings, category.name, deck.name, deck.chapters.map((chapter) => chapter.name), checked);
             scSaveSettings();
             scRenderScopeTree();
           },
-          `分类 ${category.name}`,
+          `卡组 ${deck.name}`,
         );
-        const categoryLabel = scCreate('span', 'sc-tree__label', category.name);
-        const categoryCount = scCreate('span', 'sc-tree__count', `${categoryStats.selected}张/${categoryStats.total}张`);
-        categoryRow.appendChild(categoryBox);
-        categoryRow.appendChild(categoryLabel);
-        categoryRow.appendChild(categoryCount);
-        categoryNode.appendChild(categoryRow);
+        const deckLabel = scCreate('span', 'sc-tree__label', deck.name);
+        const deckCount = scCreate('span', 'sc-tree__count', `${deckStats.selected}张/${deckStats.total}张`);
+        deckRow.appendChild(deckCaret);
+        deckRow.appendChild(deckBox);
+        deckRow.appendChild(deckLabel);
+        deckRow.appendChild(deckCount);
+        deckNode.addEventListener('click', (event) => {
+          if (scIsInteractiveTarget(event)) return;
+          // 点在主题行上（它是卡组块里的子行）时，别把整个卡组收起。
+          if (scClickInsideBlock(event.target, deckNode, 'sc-tree__row--chapter')) return;
+          scToggleDeckExpanded(deck.name);
+        });
+        deckNode.appendChild(deckRow);
 
-        for (const chapter of category.chapters) {
-          const chapterRow = scCreate('div', 'sc-tree__row sc-tree__row--chapter');
-          const chapterBox = scBuildCheckbox(
-            scIsLeafSelected(settings, deck.name, category.name, chapter.name),
-            (checked) => {
-              scSetLeafSelected(settings, deck.name, category.name, chapter.name, checked);
-              scSaveSettings();
-              scRenderScopeTree();
-            },
-            `主题 ${chapter.name}`,
-          );
-          const chapterLabel = scCreate('span', 'sc-tree__label', chapter.name);
-          const chapterSelected = scIsLeafSelected(settings, deck.name, category.name, chapter.name);
-          const chapterCount = scCreate('span', 'sc-tree__count',
-            `${chapterSelected ? chapter.total : 0}张/${chapter.total}张`);
-          chapterRow.appendChild(chapterBox);
-          chapterRow.appendChild(chapterLabel);
-          chapterRow.appendChild(chapterCount);
-          chapterRow.title = chapter.cards.map((card) => `${card.number || card.id} ${card.name}`).join('\n');
-          categoryNode.appendChild(chapterRow);
+        if (deckExpanded) {
+          for (const chapter of deck.chapters) {
+            const chapterRow = scCreate('div', 'sc-tree__row sc-tree__row--chapter');
+            const chapterBox = scBuildCheckbox(
+              scIsLeafSelected(settings, category.name, deck.name, chapter.name),
+              (checked) => {
+                scSetLeafSelected(settings, category.name, deck.name, chapter.name, checked);
+                scSaveSettings();
+                scRenderScopeTree();
+              },
+              `主题 ${chapter.name}`,
+            );
+            const chapterLabel = scCreate('span', 'sc-tree__label', chapter.name);
+            const chapterSelected = scIsLeafSelected(settings, category.name, deck.name, chapter.name);
+            const chapterCount = scCreate('span', 'sc-tree__count',
+              `${chapterSelected ? chapter.total : 0}张/${chapter.total}张`);
+            chapterRow.appendChild(scBuildCaretSpacer());
+            chapterRow.appendChild(chapterBox);
+            chapterRow.appendChild(chapterLabel);
+            chapterRow.appendChild(chapterCount);
+            chapterRow.title = chapter.cards.map((card) => `${card.number || card.id} ${card.name}`).join('\n');
+            deckNode.appendChild(chapterRow);
+          }
         }
-        deckNode.appendChild(categoryNode);
+        categoryNode.appendChild(deckNode);
       }
     }
-    tree.appendChild(deckNode);
+    tree.appendChild(categoryNode);
   }
   scRefreshSummary();
 }

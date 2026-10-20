@@ -91,69 +91,71 @@ function scAddCustomCards(cards) {
 }
 
 // ---------- 范围树 ----------
-// 三层：卡组 → 分类 → 主题。每个节点带 own 张数与含子树的 total 张数，
-// 供 UI 显示「红楼梦（138）」这类计数，也让玩家知道勾完能抽到多少张。
+// 三层：分类 → 卡组 → 主题，与 cards/<分类>/<卡组>/<主题>/ 目录一一对应。
+// 每个节点带含子树的 total 张数，供 UI 显示「奇幻类 7张/7张」这类计数，
+// 也让玩家知道勾完能抽到多少张。
 function scBuildScopeTree() {
-  const decks = new Map();
+  const categories = new Map();
   for (const card of scGetLibrary()) {
-    const deckName = String(card.deck || '未分组');
     const categoryName = String(card.category || '未分类');
+    const deckName = String(card.deck || '未分组');
     const chapterName = String(card.chapter || '未分主题');
-    if (!decks.has(deckName)) decks.set(deckName, { name: deckName, total: 0, categories: new Map() });
-    const deck = decks.get(deckName);
-    if (!deck.categories.has(categoryName)) deck.categories.set(categoryName, { name: categoryName, total: 0, chapters: new Map() });
-    const category = deck.categories.get(categoryName);
-    if (!category.chapters.has(chapterName)) category.chapters.set(chapterName, { name: chapterName, total: 0, cards: [] });
-    const chapter = category.chapters.get(chapterName);
+    if (!categories.has(categoryName)) categories.set(categoryName, { name: categoryName, total: 0, decks: new Map() });
+    const category = categories.get(categoryName);
+    if (!category.decks.has(deckName)) category.decks.set(deckName, { name: deckName, total: 0, chapters: new Map() });
+    const deck = category.decks.get(deckName);
+    if (!deck.chapters.has(chapterName)) deck.chapters.set(chapterName, { name: chapterName, total: 0, cards: [] });
+    const chapter = deck.chapters.get(chapterName);
     chapter.cards.push(card);
     chapter.total += 1;
-    category.total += 1;
     deck.total += 1;
+    category.total += 1;
   }
-  return Array.from(decks.values()).map((deck) => ({
-    name: deck.name,
-    total: deck.total,
-    categories: Array.from(deck.categories.values()).map((category) => ({
-      name: category.name,
-      total: category.total,
-      chapters: Array.from(category.chapters.values()),
+  return Array.from(categories.values()).map((category) => ({
+    name: category.name,
+    total: category.total,
+    decks: Array.from(category.decks.values()).map((deck) => ({
+      name: deck.name,
+      total: deck.total,
+      chapters: Array.from(deck.chapters.values()),
     })),
   }));
 }
 
-// 叶子键：卡组 / 分类 / 主题 三段拼成稳定字符串，作为 selectedLeaves 的键。
-function scLeafKey(deck, category, chapter) {
-  return [deck, category, chapter].map((part) => String(part == null ? '' : part)).join('\u0001');
+// 叶子键：分类 / 卡组 / 主题 三段拼成稳定字符串，作为 selectedLeaves 的键。
+// 嵌套顺序与目录一致：{ 分类: { 卡组: { 主题: true } } }。
+function scLeafKey(category, deck, chapter) {
+  return [category, deck, chapter].map((part) => String(part == null ? '' : part)).join('\u0001');
 }
 
 // 一个叶子（主题）是否被勾选。
-function scIsLeafSelected(settings, deck, category, chapter) {
-  const deckSel = settings.selectedLeaves?.[deck];
-  const categorySel = deckSel?.[category];
-  return Boolean(categorySel && categorySel[chapter]);
+function scIsLeafSelected(settings, category, deck, chapter) {
+  const categorySel = settings.selectedLeaves?.[category];
+  const deckSel = categorySel?.[deck];
+  return Boolean(deckSel && deckSel[chapter]);
 }
 
 // 勾选 / 取消一个叶子。
-function scSetLeafSelected(settings, deck, category, chapter, selected) {
+function scSetLeafSelected(settings, category, deck, chapter, selected) {
   if (!settings.selectedLeaves || typeof settings.selectedLeaves !== 'object') settings.selectedLeaves = {};
   const leaves = settings.selectedLeaves;
   if (selected) {
-    if (!leaves[deck]) leaves[deck] = {};
-    if (!leaves[deck][category]) leaves[deck][category] = {};
-    leaves[deck][category][chapter] = true;
+    if (!leaves[category]) leaves[category] = {};
+    if (!leaves[category][deck]) leaves[category][deck] = {};
+    leaves[category][deck][chapter] = true;
     return;
   }
-  if (leaves[deck]?.[category]) {
-    delete leaves[deck][category][chapter];
-    if (Object.keys(leaves[deck][category]).length === 0) delete leaves[deck][category];
-    if (Object.keys(leaves[deck]).length === 0) delete leaves[deck];
+  if (leaves[category]?.[deck]) {
+    delete leaves[category][deck][chapter];
+    if (Object.keys(leaves[category][deck]).length === 0) delete leaves[category][deck];
+    if (Object.keys(leaves[category]).length === 0) delete leaves[category];
   }
 }
 
 // 节点级批量勾选 / 取消：把子树里所有叶子一起改。
-function scSetSubtreeSelected(settings, deck, category, chapters, selected) {
+function scSetSubtreeSelected(settings, category, deck, chapters, selected) {
   for (const chapter of chapters) {
-    scSetLeafSelected(settings, deck, category, chapter, selected);
+    scSetLeafSelected(settings, category, deck, chapter, selected);
   }
 }
 
@@ -171,12 +173,12 @@ function scSummarizeSelection(settings) {
   let totalCards = 0;
   let selectedLeaves = 0;
   let totalLeaves = 0;
-  for (const deck of tree) {
-    for (const category of deck.categories) {
-      for (const chapter of category.chapters) {
+  for (const category of tree) {
+    for (const deck of category.decks) {
+      for (const chapter of deck.chapters) {
         totalLeaves += 1;
         totalCards += chapter.total;
-        if (scIsLeafSelected(settings, deck.name, category.name, chapter.name)) {
+        if (scIsLeafSelected(settings, category.name, deck.name, chapter.name)) {
           selectedLeaves += 1;
           selectedCards += chapter.total;
         }
@@ -191,10 +193,10 @@ function scSummarizeSelection(settings) {
 function scFilterBySelection(settings) {
   const library = scGetLibrary();
   const anyLeaf = Object.values(settings.selectedLeaves || {}).some(
-    (categories) => Object.values(categories || {}).some((chapters) => Object.keys(chapters || {}).length > 0),
+    (decks) => Object.values(decks || {}).some((chapters) => Object.keys(chapters || {}).length > 0),
   );
   if (!anyLeaf) return { cards: library.slice(), unrestricted: true };
-  const cards = library.filter((card) => scIsLeafSelected(settings, card.deck, card.category, card.chapter));
+  const cards = library.filter((card) => scIsLeafSelected(settings, card.category, card.deck, card.chapter));
   return { cards, unrestricted: false };
 }
 
@@ -207,31 +209,31 @@ function scPruneStaleSelection(settings) {
   if (!leaves || typeof leaves !== 'object') return 0;
   const tree = scBuildScopeTree();
   let removed = 0;
-  for (const deck of tree) {
-    const deckSel = leaves[deck.name];
-    if (!deckSel || typeof deckSel !== 'object') continue;
-    for (const category of deck.categories) {
-      const categorySel = deckSel[category.name];
-      if (!categorySel || typeof categorySel !== 'object') continue;
-      const valid = new Set(category.chapters.map((chapter) => chapter.name));
-      for (const chapterName of Object.keys(categorySel)) {
+  for (const category of tree) {
+    const categorySel = leaves[category.name];
+    if (!categorySel || typeof categorySel !== 'object') continue;
+    for (const deck of category.decks) {
+      const deckSel = categorySel[deck.name];
+      if (!deckSel || typeof deckSel !== 'object') continue;
+      const valid = new Set(deck.chapters.map((chapter) => chapter.name));
+      for (const chapterName of Object.keys(deckSel)) {
         if (!valid.has(chapterName)) {
-          delete categorySel[chapterName];
+          delete deckSel[chapterName];
           removed += 1;
         }
       }
-      if (Object.keys(categorySel).length === 0) delete deckSel[category.name];
+      if (Object.keys(deckSel).length === 0) delete categorySel[deck.name];
     }
-    if (Object.keys(deckSel).length === 0) delete leaves[deck.name];
+    if (Object.keys(categorySel).length === 0) delete leaves[category.name];
   }
-  // 卡组 / 分类整块都已不存在的旧键也一并清掉。
-  const deckNames = new Set(tree.map((deck) => deck.name));
-  for (const deckName of Object.keys(leaves)) {
-    if (!deckNames.has(deckName)) {
-      removed += Object.values(leaves[deckName] || {}).reduce(
-        (sum, categories) => sum + Object.keys(categories || {}).length, 0,
+  // 分类 / 卡组整块都已不存在的旧键也一并清掉。
+  const categoryNames = new Set(tree.map((category) => category.name));
+  for (const categoryName of Object.keys(leaves)) {
+    if (!categoryNames.has(categoryName)) {
+      removed += Object.values(leaves[categoryName] || {}).reduce(
+        (sum, decks) => sum + Object.keys(decks || {}).length, 0,
       );
-      delete leaves[deckName];
+      delete leaves[categoryName];
     }
   }
   if (removed > 0) scSaveSettings();

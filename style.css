@@ -178,16 +178,16 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
-.sc-tree__row--deck {
+.sc-tree__row--category {
   font-weight: 700;
 }
 
-.sc-tree__row--category {
+.sc-tree__row--deck {
   padding-left: 18px;
 }
 
 .sc-tree__row--chapter {
-  padding-left: 40px;
+  padding-left: 36px;
   font-size: 13px;
 }
 
@@ -200,6 +200,12 @@
   width: 18px;
   padding: 0;
   font-size: 12px;
+  flex: 0 0 auto;
+}
+
+/* 主题行没有子级，用等宽空位对齐勾选框。 */
+.sc-tree__caret-spacer {
+  width: 18px;
   flex: 0 0 auto;
 }
 
