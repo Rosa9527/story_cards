@@ -745,15 +745,22 @@ async function main() {
   const resultBox = env.document.getElementById('sc-result');
   check('结果显示抽到的卡名', resultBox.textContent.trim().length > 0, resultBox.textContent.trim());
 
-  // 「查看注入的提示词」：按钮在，点开后显示最近一次注入原文。
+  // 「查看注入的提示词」：标题栏按钮在，点一下整屏切到查看界面，再点「返回」回主界面。
+  const mainView = env.document.getElementById('sc-main-view');
+  const injectView = env.document.getElementById('sc-inject-view');
   const viewInjectButton = env.document.getElementById('sc-view-inject');
-  check('「查看注入的提示词」按钮存在', Boolean(viewInjectButton));
-  const injectPreview = env.document.getElementById('sc-inject-preview');
-  check('注入预览默认收起', Boolean(injectPreview) && injectPreview.hidden === true);
+  const backButton = env.document.getElementById('sc-inject-back');
+  check('主界面与查看界面都存在', Boolean(mainView) && Boolean(injectView));
+  check('「查看注入的提示词」按钮存在（标题栏）', Boolean(viewInjectButton));
+  check('「返回」按钮存在', Boolean(backButton));
+  check('默认停在主界面（查看界面隐藏）',
+    mainView.hidden === false && injectView.hidden === true);
   viewInjectButton.click();
-  check('点一下展开注入预览', injectPreview.hidden === false);
+  check('点眼睛按钮切到查看界面',
+    mainView.hidden === true && injectView.hidden === false);
+  const injectPreview = env.document.getElementById('sc-inject-preview');
   const previewText = injectPreview.find((node) => node.classList.contains('sc-inject__text'));
-  check('预览里有注入原文', Boolean(previewText) && previewText.textContent.length > 0,
+  check('查看界面里有注入原文', Boolean(previewText) && previewText.textContent.length > 0,
     previewText && String(previewText.textContent.length));
   check('预览原文与槽位一致',
     previewText && previewText.textContent === env.host.extensionPrompts['story-cards-draw'].value,
@@ -761,8 +768,15 @@ async function main() {
   check('预览带落点参数说明',
     injectPreview.find((node) => node.classList.contains('sc-inject__meta')) !== null);
   check('预览有复制按钮', Boolean(env.document.getElementById('sc-inject-copy')));
+  backButton.click();
+  check('点「返回」回主界面',
+    mainView.hidden === false && injectView.hidden === true);
+  // 没抽过卡时，查看界面显示空态提示而不是崩掉。
+  env.sandbox.__story_cards_last_inject__ = null;
   viewInjectButton.click();
-  check('再点一下收起注入预览', injectPreview.hidden === true);
+  check('无注入记录时查看界面显示空态',
+    injectView.find((node) => node.classList.contains('sc-inject__empty')) !== null);
+  backButton.click();
 
   // ---------- 7. 范围树交互（勾选 + 展开） ----------
   // 树三层与目录一致：分类 → 卡组 → 主题。顶层分类行常显，卡组行要展开分类才出，

@@ -48,6 +48,8 @@ function scOpenPanel() {
   if (!panel) return;
   panel.classList.add('sc-panel--open');
   panel.setAttribute('aria-hidden', 'false');
+  // 每次打开都回到主界面，避免上次停在查看界面时看着像「卡住了」。
+  scShowMainView();
   scRenderScopeTree();
   // 概况行只在没有操作结果时补画，别把「已导出 …」这类提示顶掉。
   scRefreshCardStatus();
@@ -73,11 +75,24 @@ function scCreatePanel() {
   panel.setAttribute('aria-hidden', 'true');
 
   const header = scCreate('div', 'sc-panel__header');
-  const title = scCreate('div', 'sc-panel__title', SC_MODULE_DISPLAY_NAME);
+  const title = scCreate('div', 'sc-panel__title');
   const titleIcon = scCreate('i', SC_DRAW_ICON_CLASS);
-  title.prepend(titleIcon);
+  titleIcon.id = SC_PANEL_TITLE_ICON_ID;
+  const titleText = scCreate('span', '', SC_MODULE_DISPLAY_NAME);
+  titleText.id = SC_PANEL_TITLE_ID;
+  title.appendChild(titleIcon);
+  title.appendChild(titleText);
   const headerActions = scCreate('div', 'sc-panel__header-actions');
+  // 「查看注入的提示词」：标题栏按钮，点一下把面板整体切到查看界面（见 scShowInjectView）。
+  const viewButton = scCreate('button', 'sc-icon-button sc-icon-button--view');
+  viewButton.id = SC_VIEW_INJECT_BUTTON_ID;
+  viewButton.type = 'button';
+  viewButton.innerHTML = '<i class="fa-solid fa-eye"></i>';
+  viewButton.title = '查看注入的提示词';
+  viewButton.setAttribute('aria-label', '查看注入的提示词');
+  viewButton.addEventListener('click', () => scShowInjectView());
   const resetButton = scCreate('button', 'sc-icon-button', '重置记录');
+  resetButton.id = SC_RESET_BUTTON_ID;
   resetButton.type = 'button';
   resetButton.title = '清空当前聊天的「抽过不重复」记录';
   resetButton.addEventListener('click', () => scHandleResetDrawn());
@@ -85,6 +100,7 @@ function scCreatePanel() {
   closeButton.type = 'button';
   closeButton.title = '关闭';
   closeButton.addEventListener('click', () => scClosePanel());
+  headerActions.appendChild(viewButton);
   headerActions.appendChild(resetButton);
   headerActions.appendChild(closeButton);
   header.appendChild(title);
@@ -92,6 +108,11 @@ function scCreatePanel() {
   panel.appendChild(header);
 
   const body = scCreate('div', 'sc-panel__body');
+
+  // 主界面：抽卡相关的一切。与「查看界面」互斥显示，由标题栏的眼睛按钮来回切。
+  const mainView = scCreate('div', 'sc-view sc-view--main');
+  mainView.id = SC_MAIN_VIEW_ID;
+  mainView.hidden = false;
 
   // 导入 / 导出卡片：整库存成一份 JSON，换设备或备份时带走。
   const cardSection = scCreate('div', 'sc-cards');
@@ -114,19 +135,19 @@ function scCreatePanel() {
   cardStatus.id = SC_CARD_STATUS_ID;
   cardSection.appendChild(cardRow);
   cardSection.appendChild(cardStatus);
-  body.appendChild(cardSection);
+  mainView.appendChild(cardSection);
 
   const scopeTitle = scCreate('div', 'sc-panel__section-title', '抽卡范围');
   const scopeHint = scCreate('div', 'sc-panel__hint', '勾选要抽的主题（可多选，父级勾选即整片勾上）。一个都不勾 = 全库随机。');
   const tree = scCreate('div', 'sc-tree');
   tree.id = SC_SCOPE_TREE_ID;
-  body.appendChild(scopeTitle);
-  body.appendChild(scopeHint);
-  body.appendChild(tree);
+  mainView.appendChild(scopeTitle);
+  mainView.appendChild(scopeHint);
+  mainView.appendChild(tree);
 
   const summary = scCreate('div', 'sc-summary');
   summary.id = SC_SUMMARY_ID;
-  body.appendChild(summary);
+  mainView.appendChild(summary);
 
   // 「抽过不重复」开关：范围内抽完会提示并允许重复，不会空手而归。
   const options = scCreate('label', 'sc-option');
@@ -142,7 +163,7 @@ function scCreatePanel() {
   options.appendChild(avoidRepeatBox);
   options.appendChild(scCreate('span', 'sc-option__label', '抽过不重复'));
   options.title = '同一个聊天里不重复抽同一张卡；范围内抽完会提示并允许重复';
-  body.appendChild(options);
+  mainView.appendChild(options);
 
   // 「显示悬浮球」开关：长按悬浮球会把它收起来，这里是找回它的入口
   // （扩展菜单打开面板后勾上即可），避免长按变成一个找不回来的单向操作。
@@ -157,7 +178,7 @@ function scCreatePanel() {
   floatOption.appendChild(floatBox);
   floatOption.appendChild(scCreate('span', 'sc-option__label', '显示悬浮球'));
   floatOption.title = '长按悬浮球可隐藏；在这里或扩展菜单里重新打开';
-  body.appendChild(floatOption);
+  mainView.appendChild(floatOption);
 
   const drawButton = scCreate('button', 'sc-draw-button');
   drawButton.id = SC_DRAW_BUTTON_ID;
@@ -167,27 +188,35 @@ function scCreatePanel() {
   drawButton.appendChild(drawIcon);
   drawButton.appendChild(drawLabel);
   drawButton.addEventListener('click', () => scHandleDraw());
-  body.appendChild(drawButton);
+  mainView.appendChild(drawButton);
 
   const result = scCreate('div', 'sc-result');
   result.id = SC_RESULT_ID;
-  body.appendChild(result);
+  mainView.appendChild(result);
 
-  // 「查看注入的提示词」：把最近一次真正写进宿主槽位的 <Story_Card_Draw> 原文摊开给玩家看。
-  // 默认收起，点一下展开/收起；展开区可复制。
-  const injectSection = scCreate('div', 'sc-inject');
-  const viewButton = scCreate('button', 'sc-button');
-  viewButton.id = SC_VIEW_INJECT_BUTTON_ID;
-  viewButton.type = 'button';
-  viewButton.innerHTML = '<i class="fa-solid fa-eye"></i><span>查看注入的提示词</span>';
-  viewButton.title = '显示最近一次抽卡真正注入给模型的系统导演注原文';
-  viewButton.addEventListener('click', () => scToggleInjectPreview());
-  injectSection.appendChild(viewButton);
+  body.appendChild(mainView);
+
+  // 查看界面：单独一屏，只放最近一次注入的原文。从主界面标题栏的眼睛按钮进来，
+  // 左上角「返回」回到主界面。内容在切入时按最新记录重画（见 scRenderInjectPreview）。
+  const injectView = scCreate('div', 'sc-view sc-view--inject');
+  injectView.id = SC_INJECT_VIEW_ID;
+  injectView.hidden = true;
+
+  const injectBar = scCreate('div', 'sc-view__bar');
+  const backButton = scCreate('button', 'sc-view__back');
+  backButton.id = SC_INJECT_BACK_BUTTON_ID;
+  backButton.type = 'button';
+  backButton.innerHTML = '<i class="fa-solid fa-arrow-left"></i><span>返回抽卡</span>';
+  backButton.title = '返回抽卡界面';
+  backButton.addEventListener('click', () => scShowMainView());
+  injectBar.appendChild(backButton);
+  injectView.appendChild(injectBar);
+
   const injectPreview = scCreate('div', 'sc-inject__preview');
   injectPreview.id = SC_INJECT_PREVIEW_ID;
-  injectPreview.hidden = true;
-  injectSection.appendChild(injectPreview);
-  body.appendChild(injectSection);
+  injectView.appendChild(injectPreview);
+
+  body.appendChild(injectView);
 
   panel.appendChild(body);
   document.body.appendChild(panel);
@@ -663,19 +692,37 @@ function scSetResult(kind, text, detail) {
   if (detail) result.appendChild(scCreate('div', 'sc-result__detail', detail));
 }
 
-// ---------- 查看注入的提示词 ----------
-// 展开 / 收起注入预览；展开时按最近一次注入记录重画内容。
-function scToggleInjectPreview() {
-  const preview = scEl(SC_INJECT_PREVIEW_ID);
-  if (!preview) return;
-  if (preview.hidden) {
-    scRenderInjectPreview();
-    preview.hidden = false;
-    scEl(SC_VIEW_INJECT_BUTTON_ID)?.classList.add('sc-button--active');
-  } else {
-    preview.hidden = true;
-    scEl(SC_VIEW_INJECT_BUTTON_ID)?.classList.remove('sc-button--active');
-  }
+// ---------- 查看注入的提示词（独立查看界面） ----------
+// 面板两态：主界面（抽卡）与查看界面（注入原文）。同一时刻只显示一个，互斥切换。
+// 切到查看界面时按最近一次注入记录重画内容。
+function scIsInjectViewOpen() {
+  const view = scEl(SC_INJECT_VIEW_ID);
+  return Boolean(view && !view.hidden);
+}
+
+function scShowInjectView() {
+  const mainView = scEl(SC_MAIN_VIEW_ID);
+  const injectView = scEl(SC_INJECT_VIEW_ID);
+  if (!injectView) return;
+  scRenderInjectPreview();
+  if (mainView) mainView.hidden = true;
+  injectView.hidden = false;
+  // 标题栏跟着换成「查看注入的提示词」，让玩家清楚当前在哪个屏。
+  const titleText = scEl(SC_PANEL_TITLE_ID);
+  if (titleText) titleText.textContent = '查看注入的提示词';
+  const titleIcon = scEl(SC_PANEL_TITLE_ICON_ID);
+  if (titleIcon) titleIcon.className = 'fa-solid fa-eye';
+}
+
+function scShowMainView() {
+  const mainView = scEl(SC_MAIN_VIEW_ID);
+  const injectView = scEl(SC_INJECT_VIEW_ID);
+  if (injectView) injectView.hidden = true;
+  if (mainView) mainView.hidden = false;
+  const titleText = scEl(SC_PANEL_TITLE_ID);
+  if (titleText) titleText.textContent = SC_MODULE_DISPLAY_NAME;
+  const titleIcon = scEl(SC_PANEL_TITLE_ICON_ID);
+  if (titleIcon) titleIcon.className = SC_DRAW_ICON_CLASS;
 }
 
 // 画注入预览：落点参数 + 原文（等宽、可滚动、可复制）。
@@ -832,9 +879,8 @@ async function scHandleDraw() {
     else if (settings.avoidRepeat !== false) notes.push(`本轮候选 ${outcome.candidates.length} 张`);
     scSetResult('ok', title, [bits, notes.join(' · ')].filter(Boolean).join('　|　'));
     scRefreshSummary();
-    // 预览开着的话，跟着换成这一轮的注入原文。
-    const preview = scEl(SC_INJECT_PREVIEW_ID);
-    if (preview && !preview.hidden) scRenderInjectPreview();
+    // 抽完若正停在查看界面，跟着换成这一轮的注入原文。
+    if (scIsInjectViewOpen()) scRenderInjectPreview();
     // 抽卡后把卡牌状态行切回「卡库概况」：上一句「导入 N 张…」的任务已经完成，
     // 没必要一直占着状态行。
     scRefreshCardStatus(true);

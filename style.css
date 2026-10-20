@@ -379,24 +379,53 @@
 .sc-result--ok .sc-result__main { color: var(--sc-ok); }
 .sc-result--error .sc-result__main { color: var(--sc-err); }
 
-/* ---------- 查看注入的提示词 ---------- */
-.sc-inject {
-  margin-top: 10px;
+/* ---------- 查看注入的提示词（独立查看界面） ---------- */
+/* 标题栏的眼睛按钮：与「重置记录」同款图标按钮，只是换成眼睛图标。 */
+.sc-icon-button--view {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  padding: 4px 9px;
 }
 
-.sc-inject .sc-button {
-  width: 100%;
+/* 主界面 / 查看界面：同一时刻只显示一个（另一个 hidden）。 */
+.sc-view {
+  display: block;
 }
 
-/* 展开态：按钮高亮，提示当前是「已打开」。 */
-.sc-button--active {
+.sc-view[hidden] {
+  display: none;
+}
+
+/* 查看界面顶部的返回条。 */
+.sc-view__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--sc-border);
+}
+
+.sc-view__back {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--sc-border);
+  background: transparent;
+  color: var(--sc-fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.sc-view__back:hover {
   border-color: var(--sc-accent);
   color: var(--sc-accent);
-  background: rgba(201, 162, 39, 0.1);
-}
-
-.sc-inject__preview {
-  margin-top: 8px;
 }
 
 .sc-inject__empty {
@@ -422,7 +451,7 @@
 .sc-inject__text {
   margin: 0;
   padding: 8px;
-  max-height: 32vh;
+  max-height: 56vh;
   overflow: auto;
   border: 1px solid var(--sc-border);
   border-radius: 8px;
