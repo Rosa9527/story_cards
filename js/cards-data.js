@@ -1,8 +1,8 @@
 // ===== 剧情抽卡（Story Cards）卡库数据 · 构建产物，勿手改 =====
-// 生成时间: 2026-10-20 01:23:50 · 卡牌数: 138
+// 生成时间: 2026-10-20 12:06:56 · 卡牌数: 138
 // 来源: cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md
 // 重新生成: node build.js（或 node build.js --cards）
-// 卡面解析规则见 tools/card-parse.js，构建期与运行期共用同一份实现。
+// 卡面解析规则见 tools/card-parse.js（构建期使用）。
 (function () {
   const cards = [
   {

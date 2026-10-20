@@ -14,13 +14,14 @@ function scGetBuiltinLibrary() {
   return [];
 }
 
-// 玩家在面板里加载的卡牌（存在设置里，随酒馆设置持久化）。
+// 玩家在面板里导入的卡牌（存在设置里，随酒馆设置持久化）。
+// 注意这是导入出来的一份副本——没有导出的卡牌就只剩构建期卡库里的那些。
 function scGetCustomCards() {
   const settings = scGetSettings();
   return Array.isArray(settings.customCards) ? settings.customCards : [];
 }
 
-// 合并卡库：内置 + 玩家加载，同 id 时玩家加载的覆盖内置（方便自己改卡面后即时生效）。
+// 合并卡库：内置 + 玩家导入，同 id 时玩家导入的覆盖内置（方便自己改卡面后即时生效）。
 // 每次调用都重新合并；调用方（范围树 / 抽卡 / 注入）都走这里，保证三处永远同一份视图。
 function scGetLibrary() {
   const custom = scGetCustomCards();
@@ -87,15 +88,6 @@ function scAddCustomCards(cards) {
   settings.customCards = list;
   scSaveSettings();
   return { added, replaced, total: list.length, truncated };
-}
-
-// 清空玩家加载的卡牌，回到「只有构建期卡库」的状态。返回清掉的张数。
-function scClearCustomCards() {
-  const settings = scGetSettings();
-  const count = scGetCustomCards().length;
-  settings.customCards = [];
-  scSaveSettings();
-  return count;
 }
 
 // ---------- 范围树 ----------

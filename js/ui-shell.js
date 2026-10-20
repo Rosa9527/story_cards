@@ -29,6 +29,8 @@ function scOpenPanel() {
   panel.classList.add('sc-panel--open');
   panel.setAttribute('aria-hidden', 'false');
   scRenderScopeTree();
+  // 概况行只在没有操作结果时补画，别把「已导出 …」这类提示顶掉。
+  scRefreshCardStatus();
 }
 
 function scClosePanel() {
@@ -71,22 +73,23 @@ function scCreatePanel() {
 
   const body = scCreate('div', 'sc-panel__body');
 
-  // 加载卡牌：把磁盘上的卡牌文件夹 / .md 文件临时并进卡库（存在设置里，随酒馆设置持久化）。
+  // 导入 / 导出卡片：整库存成一份 JSON，换设备或备份时带走。
   const cardSection = scCreate('div', 'sc-cards');
   const cardRow = scCreate('div', 'sc-cards__row');
-  const loadButton = scCreate('button', 'sc-button sc-button--primary');
-  loadButton.id = SC_LOAD_CARDS_BUTTON_ID;
-  loadButton.type = 'button';
-  loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i><span>加载卡牌</span>';
-  loadButton.title = '选择一个卡牌文件夹（<卡组>/<分类>/<回目>/*.md）或一批 .md 文件，解析后并入卡库';
-  loadButton.addEventListener('click', () => { void scHandleLoadCards(); });
-  const clearButton = scCreate('button', 'sc-button', '移除加载');
-  clearButton.id = SC_CLEAR_CARDS_BUTTON_ID;
-  clearButton.type = 'button';
-  clearButton.title = '移除通过「加载卡牌」并入的卡牌，回到构建期卡库';
-  clearButton.addEventListener('click', () => scHandleClearCustomCards());
-  cardRow.appendChild(loadButton);
-  cardRow.appendChild(clearButton);
+  const importButton = scCreate('button', 'sc-button sc-button--primary');
+  importButton.id = SC_IMPORT_CARDS_BUTTON_ID;
+  importButton.type = 'button';
+  importButton.innerHTML = '<i class="fa-solid fa-file-import"></i><span>导入卡片</span>';
+  importButton.title = '选择一个卡牌 .json 文件，解析后并入卡库（同卡号覆盖）';
+  importButton.addEventListener('click', () => { void scHandleImportCards(); });
+  const exportButton = scCreate('button', 'sc-button');
+  exportButton.id = SC_EXPORT_CARDS_BUTTON_ID;
+  exportButton.type = 'button';
+  exportButton.innerHTML = '<i class="fa-solid fa-file-export"></i><span>导出卡片</span>';
+  exportButton.title = '把当前卡库（内置 + 已导入）导出成一个 .json 文件';
+  exportButton.addEventListener('click', () => { void scHandleExportCards(); });
+  cardRow.appendChild(importButton);
+  cardRow.appendChild(exportButton);
   const cardStatus = scCreate('div', 'sc-cards__status');
   cardStatus.id = SC_CARD_STATUS_ID;
   cardSection.appendChild(cardRow);
@@ -446,14 +449,14 @@ function scBuildCheckbox(state, onToggle, ariaLabel) {
   return wrap;
 }
 
-// 统计子树里被勾选的叶子数与总叶子数（回目数）。
+// 统计子树里被勾选的张数与总张数。
 function scCountSubtree(settings, deckName, categories) {
   let selected = 0;
   let total = 0;
   for (const category of categories) {
     for (const chapter of category.chapters) {
-      total += 1;
-      if (scIsLeafSelected(settings, deckName, category.name, chapter.name)) selected += 1;
+      total += chapter.total;
+      if (scIsLeafSelected(settings, deckName, category.name, chapter.name)) selected += chapter.total;
     }
   }
   return { selected, total };
@@ -467,7 +470,7 @@ function scRenderScopeTree() {
   tree.textContent = '';
 
   if (scopeTree.length === 0) {
-    const empty = scCreate('div', 'sc-tree__empty', '卡库是空的。点上面「加载卡牌」选一个卡牌文件夹，或把卡牌放进 cards/<卡组>/<分类>/<回目>/ 后运行 node build.js。');
+    const empty = scCreate('div', 'sc-tree__empty', '卡库是空的。点上面「导入卡片」选一个卡牌 .json 文件，或把卡牌放进 cards/<卡组>/<分类>/<回目>/ 后运行 node build.js。');
     tree.appendChild(empty);
     scRefreshSummary();
     return;
@@ -498,7 +501,7 @@ function scRenderScopeTree() {
       `卡组 ${deck.name}`,
     );
     const deckLabel = scCreate('span', 'sc-tree__label', `${deck.name}`);
-    const deckCount = scCreate('span', 'sc-tree__count', `${deckStats.selected}/${deck.total} 回 · ${deck.total} 张`);
+    const deckCount = scCreate('span', 'sc-tree__count', `${deckStats.selected}张/${deckStats.total}张`);
     deckRow.appendChild(caret);
     deckRow.appendChild(deckBox);
     deckRow.appendChild(deckLabel);
@@ -526,7 +529,7 @@ function scRenderScopeTree() {
           `分类 ${category.name}`,
         );
         const categoryLabel = scCreate('span', 'sc-tree__label', category.name);
-        const categoryCount = scCreate('span', 'sc-tree__count', `${categoryStats.selected}/${category.total} 回 · ${category.total} 张`);
+        const categoryCount = scCreate('span', 'sc-tree__count', `${categoryStats.selected}张/${categoryStats.total}张`);
         categoryRow.appendChild(categoryBox);
         categoryRow.appendChild(categoryLabel);
         categoryRow.appendChild(categoryCount);
@@ -544,7 +547,9 @@ function scRenderScopeTree() {
             `回目 ${chapter.name}`,
           );
           const chapterLabel = scCreate('span', 'sc-tree__label', chapter.name);
-          const chapterCount = scCreate('span', 'sc-tree__count', `${chapter.total} 张`);
+          const chapterSelected = scIsLeafSelected(settings, deck.name, category.name, chapter.name);
+          const chapterCount = scCreate('span', 'sc-tree__count',
+            `${chapterSelected ? chapter.total : 0}张/${chapter.total}张`);
           chapterRow.appendChild(chapterBox);
           chapterRow.appendChild(chapterLabel);
           chapterRow.appendChild(chapterCount);
@@ -576,7 +581,7 @@ function scRefreshSummary() {
   const remaining = settings.avoidRepeat === false ? pool.length : Math.max(0, pool.length - drawnInPool);
   const scopeText = unrestricted
     ? `全库随机（${pool.length} 张）`
-    : `${stats.selectedLeaves}/${stats.totalLeaves} 回 · ${pool.length} 张`;
+    : `${stats.selectedCards}张/${stats.totalCards}张`;
   summary.textContent = '';
   summary.appendChild(scCreate('span', 'sc-summary__scope', scopeText));
   const remain = scCreate('span', 'sc-summary__remain', `可抽 ${remaining} 张`);
@@ -594,8 +599,8 @@ function scSetResult(kind, text, detail) {
   if (detail) result.appendChild(scCreate('div', 'sc-result__detail', detail));
 }
 
-// ---------- 加载卡牌的状态行 ----------
-// 状态行有两种内容：操作结果（「加载 138 张…」，要留住）与卡库概况（「卡库 138 张」，
+// ---------- 卡牌状态行 ----------
+// 状态行有两种内容：操作结果（「导入 138 张…」，要留住）与卡库概况（「卡库 138 张」，
 // 随时可重画）。scRenderScopeTree 会反复触发概况重画，所以必须记住当前是不是操作结果，
 // 否则操作结果会被概况覆盖掉、玩家根本看不到。
 let scCardStatusIsAuto = true;
@@ -609,7 +614,7 @@ function scSetCardStatus(text, kind) {
   scCardStatusIsAuto = false;
 }
 
-// 画「卡库 N 张（内置 X + 加载 Y）」概况；正在显示操作结果时不覆盖。
+// 画「卡库 N 张（内置 X + 导入 Y）」概况；正在显示操作结果时不覆盖。
 function scRefreshCardStatus(force) {
   const status = scEl(SC_CARD_STATUS_ID);
   if (!status) return;
@@ -618,7 +623,7 @@ function scRefreshCardStatus(force) {
   const custom = scGetCustomCards().length;
   const total = scGetLibrary().length;
   status.textContent = custom > 0
-    ? `卡库 ${total} 张（内置 ${builtin} + 加载 ${custom}）`
+    ? `卡库 ${total} 张（内置 ${builtin} + 导入 ${custom}）`
     : `卡库 ${total} 张`;
   status.className = 'sc-cards__status';
   scCardStatusIsAuto = true;
@@ -683,7 +688,7 @@ async function scHandleDraw() {
     else if (settings.avoidRepeat !== false) notes.push(`本轮候选 ${outcome.candidates.length} 张`);
     scSetResult('ok', title, [bits, notes.join(' · ')].filter(Boolean).join('　|　'));
     scRefreshSummary();
-    // 抽卡后把卡牌状态行切回「卡库概况」：上一句「加载 N 张…」的任务已经完成，
+    // 抽卡后把卡牌状态行切回「卡库概况」：上一句「导入 N 张…」的任务已经完成，
     // 没必要一直占着状态行。
     scRefreshCardStatus(true);
     scLogInfo('已抽卡并发送', { card: title, strategy: sendResult.strategy });

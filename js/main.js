@@ -166,6 +166,7 @@ async function scBootstrap() {
     scInstallHostEventSubscriptions(ctx);
     scStartHostEventWatchdog();
     scCreatePanel();
+    scRefreshCardStatus();
     scCreateFloatingButton();
     scApplyFloatingButtonVisibility();
     scRefreshSummary();

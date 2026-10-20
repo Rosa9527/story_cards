@@ -15,10 +15,10 @@ const SC_DRAW_BUTTON_ID = 'sc-draw-button';
 const SC_SUMMARY_ID = 'sc-scope-summary';
 const SC_AVOID_REPEAT_ID = 'sc-avoid-repeat';
 const SC_SHOW_FLOAT_ID = 'sc-show-float';
-const SC_LOAD_CARDS_BUTTON_ID = 'sc-load-cards';
-const SC_CLEAR_CARDS_BUTTON_ID = 'sc-clear-cards';
+const SC_IMPORT_CARDS_BUTTON_ID = 'sc-import-cards';
+const SC_EXPORT_CARDS_BUTTON_ID = 'sc-export-cards';
 const SC_CARD_STATUS_ID = 'sc-card-status';
-const SC_FILE_INPUT_ID = 'sc-file-input';
+const SC_IMPORT_FILE_INPUT_ID = 'sc-import-file-input';
 const SC_RESULT_ID = 'sc-result';
 const SC_MENU_ICON_CLASS = 'fa-solid fa-clone';
 const SC_DRAW_ICON_CLASS = 'fa-solid fa-dice';
@@ -84,14 +84,16 @@ const SC_SEND_CONFIRM_INTERVAL_MS = 120;
 // 填完输入框到点发送之间的等待：给宿主自己的输入监听（自动补全、字数统计）留一拍。
 const SC_SEND_SETTLE_MS = 60;
 
-// ---------- 加载卡牌 ----------
-// 玩家在面板里临时加载的卡牌存在设置里（随酒馆设置持久化），与构建期编进
-// index.js 的卡库合并；同 id 时以玩家加载的为准。
+// ---------- 导入 / 导出卡片 ----------
+// 玩家导入的卡牌存在设置里（随酒馆设置持久化），与构建期编进 index.js 的
+// 卡库合并；同 id 时以导入的为准。
 const SC_CUSTOM_CARDS_LIMIT = 5000;
-// 单个卡牌文件大小上限（1 MB）：正常卡面 1~3 KB，超过这个量级基本是选错了文件。
-const SC_CARD_FILE_MAX_BYTES = 1024 * 1024;
-// 一次最多处理多少个文件（防止误选整个磁盘目录把页面卡死）。
-const SC_CARD_FILE_MAX_COUNT = 3000;
+// 导出文件的格式标识与版本号（导入时只认 cards 数组，version 供以后兼容）。
+const SC_CARD_JSON_FORMAT = 'story-cards';
+const SC_CARD_JSON_VERSION = 1;
+// 单个 JSON 文件大小上限（16 MB）：5000 张卡面的正常体积远低于这个量级，
+// 超过基本是选错了文件。
+const SC_CARD_JSON_MAX_BYTES = 16 * 1024 * 1024;
 
 // ---------- 菜单 / 启动 ----------
 const SC_MENU_RETRY_COUNT = 40;

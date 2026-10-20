@@ -1,5 +1,5 @@
 // ===== 剧情抽卡（Story Cards）index.js — 构建产物，勿手改 =====
-// 构建时间: 2026-10-20 01:23:50 · 文件数: 11 · 指纹: 9f13f6bc
+// 构建时间: 2026-10-20 12:06:56 · 文件数: 10 · 指纹: 1682975b
 
 // ===== js/constants.js =====
 // ===== 剧情抽卡（Story Cards）全局常量 =====
@@ -19,10 +19,10 @@ const SC_DRAW_BUTTON_ID = 'sc-draw-button';
 const SC_SUMMARY_ID = 'sc-scope-summary';
 const SC_AVOID_REPEAT_ID = 'sc-avoid-repeat';
 const SC_SHOW_FLOAT_ID = 'sc-show-float';
-const SC_LOAD_CARDS_BUTTON_ID = 'sc-load-cards';
-const SC_CLEAR_CARDS_BUTTON_ID = 'sc-clear-cards';
+const SC_IMPORT_CARDS_BUTTON_ID = 'sc-import-cards';
+const SC_EXPORT_CARDS_BUTTON_ID = 'sc-export-cards';
 const SC_CARD_STATUS_ID = 'sc-card-status';
-const SC_FILE_INPUT_ID = 'sc-file-input';
+const SC_IMPORT_FILE_INPUT_ID = 'sc-import-file-input';
 const SC_RESULT_ID = 'sc-result';
 const SC_MENU_ICON_CLASS = 'fa-solid fa-clone';
 const SC_DRAW_ICON_CLASS = 'fa-solid fa-dice';
@@ -88,14 +88,16 @@ const SC_SEND_CONFIRM_INTERVAL_MS = 120;
 // 填完输入框到点发送之间的等待：给宿主自己的输入监听（自动补全、字数统计）留一拍。
 const SC_SEND_SETTLE_MS = 60;
 
-// ---------- 加载卡牌 ----------
-// 玩家在面板里临时加载的卡牌存在设置里（随酒馆设置持久化），与构建期编进
-// index.js 的卡库合并；同 id 时以玩家加载的为准。
+// ---------- 导入 / 导出卡片 ----------
+// 玩家导入的卡牌存在设置里（随酒馆设置持久化），与构建期编进 index.js 的
+// 卡库合并；同 id 时以导入的为准。
 const SC_CUSTOM_CARDS_LIMIT = 5000;
-// 单个卡牌文件大小上限（1 MB）：正常卡面 1~3 KB，超过这个量级基本是选错了文件。
-const SC_CARD_FILE_MAX_BYTES = 1024 * 1024;
-// 一次最多处理多少个文件（防止误选整个磁盘目录把页面卡死）。
-const SC_CARD_FILE_MAX_COUNT = 3000;
+// 导出文件的格式标识与版本号（导入时只认 cards 数组，version 供以后兼容）。
+const SC_CARD_JSON_FORMAT = 'story-cards';
+const SC_CARD_JSON_VERSION = 1;
+// 单个 JSON 文件大小上限（16 MB）：5000 张卡面的正常体积远低于这个量级，
+// 超过基本是选错了文件。
+const SC_CARD_JSON_MAX_BYTES = 16 * 1024 * 1024;
 
 // ---------- 菜单 / 启动 ----------
 const SC_MENU_RETRY_COUNT = 40;
@@ -396,165 +398,12 @@ function scGetChatLength() {
 }
 
 
-// ===== tools/card-parse.js =====
-// ===== 剧情抽卡（Story Cards）卡牌解析器（构建期与运行期共用）=====
-// 卡牌 Markdown 的结构（cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md）：
-//
-//   # C1-03 半盏灯
-//
-//   **类型**：失去 / 疏忽
-//   **分类**：现实类
-//
-//   ## 卡面
-//
-//   <卡面正文……>
-//
-//   ## 注意事项
-//
-//   **合理化**：……
-//   **甲是谁**：……
-//
-//   ## 设计底稿        ← 可选，不参与抽卡内容
-//
-// 解析约定：
-// - 卡面 = 「## 卡面」段正文，是注入给主模型的场景内容；
-// - 注意事项 = 「## 注意事项」段整体，是给主模型的合理化/替换说明，必须一起带上，
-//   否则卡面里那些「甲」「那两个人」会在具体世界观里落不了地；
-// - 设计底稿等其它段落一律丢弃（那是给作者看的，不是给主模型的）；
-// - 段落缺失时降级为空串，绝不因为一张卡格式不标准就让整次构建失败。
-//
-// 本文件是普通脚本（非 ES module）：浏览器里由 index.js 直接拼接使用，Node 里由
-// build.js 通过 require 使用。两种环境共用同一份解析逻辑，保证「构建期写进数据的
-// 字段」与「运行期读数据的字段」永远同构。
-(function (root, factory) {
-  const api = factory();
-  if (typeof module === 'object' && module.exports) {
-    module.exports = api;
-  }
-  root.SC_CARD_PARSE = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  'use strict';
-
-  const CARD_FACE_HEADING = '卡面';
-  const CARD_NOTES_HEADING = '注意事项';
-  const CARD_DRAFT_HEADING = '设计底稿';
-
-  // 卡片 ID：取文件名主干（如 C1-03-半盏灯）。卡面标题里的卡号写法不统一
-  // （C1-03 / F16-01 混用），文件名主干才是唯一稳定的标识。
-  function parseCardId(stem) {
-    return String(stem || '').trim();
-  }
-
-  // 卡面标题行（# C1-03 半盏灯）→ { number, name }。缺标题时回退文件名。
-  function parseCardTitle(text, stem) {
-    const match = String(text || '').match(/^#\s+(.+?)\s*$/m);
-    const raw = match ? match[1].trim() : String(stem || '').trim();
-    // 「C1-03 半盏灯」→ number=C1-03, name=半盏灯；没有空格时整串当名字。
-    const split = raw.match(/^([A-Za-z]+\d+(?:-\d+)?)\s+(.+)$/);
-    if (split) return { number: split[1], name: split[2].trim() };
-    return { number: '', name: raw };
-  }
-
-  // 取「## <标题>」段落的正文，直到下一个同级或更高级标题为止。
-  function extractSection(text, heading) {
-    const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
-    const target = String(heading || '').trim();
-    let start = -1;
-    let level = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(/^(#{1,6})\s+(.+?)\s*$/);
-      if (!match) continue;
-      if (match[2].trim() === target) {
-        start = i + 1;
-        level = match[1].length;
-        break;
-      }
-    }
-    if (start === -1) return '';
-    const out = [];
-    for (let i = start; i < lines.length; i++) {
-      const match = lines[i].match(/^(#{1,6})\s+/);
-      if (match && match[1].length <= level) break;
-      out.push(lines[i]);
-    }
-    return out.join('\n').trim();
-  }
-
-  // 「**键**：值」行 → { key, value }，非此格式返回 null。
-  function parseMetaLine(line) {
-    const match = String(line || '').match(/^\*\*(.+?)\*\*\s*[：:]\s*(.*)$/);
-    if (!match) return null;
-    return { key: match[1].trim(), value: match[2].trim() };
-  }
-
-  // 从「注意事项」段里抽「**键**：值」条目；返回 [{ key, value }]。
-  // 连续多行（值里带换行）会并入上一条，保证长说明不被截断。
-  function parseNoteItems(notesText) {
-    const items = [];
-    const lines = String(notesText || '').replace(/\r\n?/g, '\n').split('\n');
-    for (const line of lines) {
-      const meta = parseMetaLine(line);
-      if (meta) {
-        items.push(meta);
-        continue;
-      }
-      if (!items.length) continue;
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      // 段落里的普通行（不是「**键**：」开头）续到上一条的值里。
-      items[items.length - 1].value += '\n' + trimmed;
-    }
-    return items;
-  }
-
-  // 解析一张卡：输入 Markdown 原文与文件名主干，输出卡库条目。
-  function parseCard(text, stem) {
-    const source = String(text || '');
-    const title = parseCardTitle(source, stem);
-    let type = '';
-    let category = '';
-    const lines = source.replace(/\r\n?/g, '\n').split('\n');
-    for (const line of lines) {
-      const meta = parseMetaLine(line);
-      if (!meta) continue;
-      if (meta.key === '类型' && !type) type = meta.value;
-      if (meta.key === '分类' && !category) category = meta.value;
-    }
-    const face = extractSection(source, CARD_FACE_HEADING);
-    const notes = extractSection(source, CARD_NOTES_HEADING);
-    return {
-      id: parseCardId(stem),
-      number: title.number,
-      name: title.name,
-      type,
-      category,
-      face,
-      notes,
-      noteItems: parseNoteItems(notes),
-      // 设计底稿刻意不保留：它只服务作者，进提示词会干扰主模型。
-      hasDraft: extractSection(source, CARD_DRAFT_HEADING) !== '',
-    };
-  }
-
-  return {
-    parseCard,
-    parseCardId,
-    parseCardTitle,
-    extractSection,
-    parseNoteItems,
-    CARD_FACE_HEADING,
-    CARD_NOTES_HEADING,
-    CARD_DRAFT_HEADING,
-  };
-});
-
-
 // ===== js/cards-data.js =====
 // ===== 剧情抽卡（Story Cards）卡库数据 · 构建产物，勿手改 =====
-// 生成时间: 2026-10-20 01:23:50 · 卡牌数: 138
+// 生成时间: 2026-10-20 12:06:56 · 卡牌数: 138
 // 来源: cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md
 // 重新生成: node build.js（或 node build.js --cards）
-// 卡面解析规则见 tools/card-parse.js，构建期与运行期共用同一份实现。
+// 卡面解析规则见 tools/card-parse.js（构建期使用）。
 (function () {
   const cards = [
   {
@@ -7380,13 +7229,14 @@ function scGetBuiltinLibrary() {
   return [];
 }
 
-// 玩家在面板里加载的卡牌（存在设置里，随酒馆设置持久化）。
+// 玩家在面板里导入的卡牌（存在设置里，随酒馆设置持久化）。
+// 注意这是导入出来的一份副本——没有导出的卡牌就只剩构建期卡库里的那些。
 function scGetCustomCards() {
   const settings = scGetSettings();
   return Array.isArray(settings.customCards) ? settings.customCards : [];
 }
 
-// 合并卡库：内置 + 玩家加载，同 id 时玩家加载的覆盖内置（方便自己改卡面后即时生效）。
+// 合并卡库：内置 + 玩家导入，同 id 时玩家导入的覆盖内置（方便自己改卡面后即时生效）。
 // 每次调用都重新合并；调用方（范围树 / 抽卡 / 注入）都走这里，保证三处永远同一份视图。
 function scGetLibrary() {
   const custom = scGetCustomCards();
@@ -7453,15 +7303,6 @@ function scAddCustomCards(cards) {
   settings.customCards = list;
   scSaveSettings();
   return { added, replaced, total: list.length, truncated };
-}
-
-// 清空玩家加载的卡牌，回到「只有构建期卡库」的状态。返回清掉的张数。
-function scClearCustomCards() {
-  const settings = scGetSettings();
-  const count = scGetCustomCards().length;
-  settings.customCards = [];
-  scSaveSettings();
-  return count;
 }
 
 // ---------- 范围树 ----------
@@ -7672,62 +7513,22 @@ function scCommitDraw(card, chatId) {
 }
 
 
-// ===== js/card-load.js =====
-// ===== 剧情抽卡（Story Cards）加载卡牌：从磁盘选卡牌文件夹 / 文件，解析后并入卡库 =====
-// 浏览器不能随便读磁盘，所以只能由玩家主动选：
-//   1. showDirectoryPicker()（Chromium 内核支持，一次选整个卡牌文件夹，保留层级）；
-//   2. <input type="file" webkitdirectory>（老一点的实现，同样保留层级）；
-//   3. <input type="file" multiple>（最后兜底：选一批 .md，卡组/分类/回目从卡面里读）。
+// ===== js/card-io.js =====
+// ===== 剧情抽卡（Story Cards）卡牌导入 / 导出：整库存成一份 JSON =====
+// 导出：把当前卡库（构建期卡库 + 已导入的卡）序列化成 .json 下载。
+// 导入：选一个 .json，归一化后并入卡库（同 id 覆盖，方便改了卡面再导回来）。
 //
-// 解析规则与构建期完全一致（共用 tools/card-parse.js，构建时已编进 index.js）。
-// 层级推断：<卡组>/<分类>/<回目>/<卡号>-<卡名>.md；层级不足时用卡面里的
-// 「**分类**：」与「# 标题」里的回目兜底，再不行就归到「未分组」。
+// 文件格式：
+// {
+//   "format": "story-cards",
+//   "version": 1,
+//   "exportedAt": "2026-10-20T12:00:00.000Z",
+//   "count": 138,
+//   "cards": [ { id, number, name, type, deck, category, chapter, rel, face, notes, noteItems } ]
+// }
+// 导入时也接受裸数组 [ ... ]、{ "cards": [ ... ] } 和老版本的 { "customCards": [ ... ] }。
 
-// 从相对路径里推层级。parts 形如 ['红楼梦','现实类','第一回','C1-03-半盏灯.md']。
-function scDeckFromPath(parts) {
-  const dirs = parts.slice(0, Math.max(0, parts.length - 1));
-  return {
-    deck: dirs.length >= 1 && dirs[0] ? dirs[0] : '',
-    category: dirs.length >= 2 && dirs[1] ? dirs[1] : '',
-    chapter: dirs.length >= 3 && dirs[2] ? dirs[2] : '',
-  };
-}
-
-// 层级不足时的兜底：卡组用「未分组」，分类优先取卡面里的「**分类**：」，
-// 回目从「# C1-03 半盏灯」的卡号前缀里猜不出来（那是回次不是回目），一律归「未分回」。
-function scFillMissingScope(card, parsed, fromPath) {
-  const deck = fromPath.deck || '未分组';
-  const category = fromPath.category || parsed.category || '未分类';
-  const chapter = fromPath.chapter || '未分回';
-  return Object.assign({}, card, { deck, category, chapter });
-}
-
-// 解析一个文件的内容成卡库条目。
-function scParseCardContent(text, stem, relativePath) {
-  const parts = String(relativePath || stem).split('/').filter(Boolean);
-  const fromPath = scDeckFromPath(parts);
-  const parser = globalThis.SC_CARD_PARSE;
-  let parsed;
-  if (parser && typeof parser.parseCard === 'function') {
-    parsed = parser.parseCard(text, stem);
-  } else {
-    // 解析器缺失时的极简兜底：至少让标题能用。
-    parsed = { id: stem, number: '', name: stem, type: '', category: '', face: text, notes: '', noteItems: [] };
-  }
-  return scFillMissingScope({
-    id: parsed.id || stem,
-    number: parsed.number || '',
-    name: parsed.name || stem,
-    type: parsed.type || '',
-    category: parsed.category || '',
-    rel: parts.join('/'),
-    face: parsed.face || '',
-    notes: parsed.notes || '',
-    noteItems: parsed.noteItems || [],
-  }, parsed, fromPath);
-}
-
-// 从一个 File 读出文本（宿主 / 浏览器差异都兜住）。
+// 从 File 读出文本（宿主 / 浏览器差异都兜住）。
 function scReadFileText(file) {
   if (file && typeof file.text === 'function') return file.text();
   return new Promise((resolve, reject) => {
@@ -7738,179 +7539,259 @@ function scReadFileText(file) {
   });
 }
 
-// 挑出可用的卡牌文件：只认 .md，跳过隐藏文件、超大文件与超出数量上限的部分。
-function scFilterCardFiles(fileList) {
-  const all = Array.from(fileList || []);
-  const md = all.filter((file) => file && /\.md$/i.test(String(file.name || '')));
-  const skippedCount = all.length - md.length;
-  const usable = [];
-  let skippedBig = 0;
-  for (const file of md) {
-    if (usable.length >= SC_CARD_FILE_MAX_COUNT) break;
-    if (Number(file.size) > SC_CARD_FILE_MAX_BYTES) {
-      skippedBig += 1;
-      continue;
-    }
-    usable.push(file);
-  }
+// 把导入的条目补成完整卡：缺卡组 / 分类 / 回目的归到「未分组」这类兜底，
+// 缺 id 的用卡号或卡名顶上。真正写库前的字段校验仍在 scNormalizeCard 里。
+function scPrepareImportedCard(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const pick = (value, fallback) => String(value == null ? '' : value).trim() || fallback;
+  const number = pick(raw.number, '');
+  const name = pick(raw.name, '');
+  const id = pick(raw.id, '') || number || name;
+  if (!id) return null;
   return {
-    usable,
-    skippedCount,
-    skippedBig,
-    truncated: Math.max(0, md.length - skippedBig - usable.length),
+    id,
+    number,
+    name: name || id,
+    type: raw.type,
+    deck: pick(raw.deck, '未分组'),
+    category: pick(raw.category, '未分类'),
+    chapter: pick(raw.chapter, '未分回'),
+    rel: raw.rel,
+    face: raw.face,
+    notes: raw.notes,
+    noteItems: raw.noteItems,
   };
 }
 
-// 读 + 解析一批文件，返回 { cards, failed, skipped }。
-async function scParseCardFiles(files) {
-  const cards = [];
-  const failed = [];
-  for (const file of files) {
-    const relativePath = String(file.webkitRelativePath || file.relativePath || file.name || '');
-    const stem = String(file.name || '').replace(/\.md$/i, '');
-    try {
-      const text = await scReadFileText(file);
-      const card = scParseCardContent(text, stem, relativePath);
-      if (card && card.id) cards.push(card);
-      else failed.push(file.name);
-    } catch (error) {
-      failed.push(file.name);
-    }
+// 解析 JSON 文本，返回 { rawCards, error }。只负责找出数组，不动内容。
+function scParseCardJson(text) {
+  let data;
+  try {
+    data = JSON.parse(String(text == null ? '' : text));
+  } catch (error) {
+    return { rawCards: null, error: '不是合法的 JSON 文件' };
   }
-  return { cards, failed };
+  if (Array.isArray(data)) return { rawCards: data, error: '' };
+  if (data && Array.isArray(data.cards)) return { rawCards: data.cards, error: '' };
+  if (data && Array.isArray(data.customCards)) return { rawCards: data.customCards, error: '' };
+  return { rawCards: null, error: 'JSON 里没有 cards 数组' };
 }
 
-// 解析完统一入库 + 刷新界面。
-function scApplyLoadedCards(cards, meta) {
-  const result = scAddCustomCards(cards);
-  const parts = [`加载 ${cards.length} 张（新增 ${result.added}，覆盖 ${result.replaced}）`];
-  if (meta && meta.skippedCount) parts.push(`跳过非 .md ${meta.skippedCount} 个`);
-  if (meta && meta.skippedBig) parts.push(`跳过超大文件 ${meta.skippedBig} 个`);
-  if (meta && meta.truncated) parts.push(`超出上限未处理 ${meta.truncated} 个`);
-  if (meta && meta.failed) parts.push(`读取失败 ${meta.failed} 个`);
+// 卡牌指纹：用来判断导入的这张跟内置的完全一样，一样就不必再存一份副本。
+function scCardSignature(card) {
+  return JSON.stringify([
+    card.id,
+    card.number || '',
+    card.name || '',
+    card.type || '',
+    card.deck || '',
+    card.category || '',
+    card.chapter || '',
+    card.face || '',
+    card.notes || '',
+    Array.isArray(card.noteItems)
+      ? card.noteItems.map((item) => [String(item?.key || ''), String(item?.value || '')])
+      : [],
+  ]);
+}
+
+function scReportImportError(error) {
+  scSetCardStatus(`导入失败：${error}`, 'error');
+  scToast('warning', `导入失败：${error}`);
+  return { ok: false, error, added: 0, replaced: 0, unchanged: 0, total: scGetLibrary().length };
+}
+
+// 导入文本 → 归一化 → 入库 → 刷新界面。返回可直接断言的统计。
+function scImportCardsFromText(text) {
+  const parsed = scParseCardJson(text);
+  if (parsed.error) return scReportImportError(parsed.error);
+  const cards = [];
+  for (const raw of parsed.rawCards) {
+    const card = scPrepareImportedCard(raw);
+    if (card) cards.push(card);
+  }
+  if (cards.length === 0) return scReportImportError('文件里没有可用的卡牌条目');
+
+  // 跟内置卡完全相同的条目直接跳过：导出再导入同一份卡库时，不会把整个
+  // 内置卡库复制进设置里（settings 体积会翻倍且毫无意义）。
+  const builtinSignatures = new Map();
+  for (const card of scGetBuiltinLibrary()) builtinSignatures.set(card.id, scCardSignature(card));
+  const incoming = [];
+  let unchanged = 0;
+  for (const card of cards) {
+    const signature = builtinSignatures.get(card.id);
+    if (signature !== undefined && signature === scCardSignature(card)) unchanged += 1;
+    else incoming.push(card);
+  }
+
+  const result = incoming.length > 0
+    ? scAddCustomCards(incoming)
+    : { added: 0, replaced: 0, total: scGetCustomCards().length, truncated: 0 };
+  const parts = [];
+  if (incoming.length > 0) parts.push(`导入 ${cards.length} 张（新增 ${result.added}，覆盖 ${result.replaced}）`);
+  if (unchanged > 0) parts.push(`${unchanged} 张与内置一致，未写入`);
+  if (parsed.rawCards.length > cards.length) parts.push(`跳过无效条目 ${parsed.rawCards.length - cards.length} 条`);
   if (result.truncated) parts.push(`卡库超上限，丢弃最早 ${result.truncated} 张`);
   const summary = parts.join('；');
   // 先重画范围树（新卡组要出现在树里），再写状态行——反过来会被概况覆盖掉。
   scRenderScopeTree();
-  scSetCardStatus(summary, cards.length > 0 ? 'ok' : 'error');
-  scToast(cards.length > 0 ? 'success' : 'warning', summary);
-  return result;
+  scSetCardStatus(summary, 'ok');
+  scToast('success', summary);
+  return {
+    ok: true,
+    error: '',
+    added: result.added,
+    replaced: result.replaced,
+    unchanged,
+    total: scGetLibrary().length,
+    truncated: result.truncated,
+    skipped: parsed.rawCards.length - cards.length,
+  };
 }
 
-// 清空玩家加载的卡牌。
-function scHandleClearCustomCards() {
-  const count = scClearCustomCards();
-  scRenderScopeTree();
-  scSetCardStatus(count > 0 ? `已移除加载的 ${count} 张` : '没有加载过卡牌', count > 0 ? 'ok' : 'muted');
-  scToast('info', count > 0 ? `已移除加载的 ${count} 张卡牌` : '没有加载过卡牌');
+// 导出用的卡牌快照：只留可导入的字段，去掉运行期标记。
+function scBuildExportCards() {
+  return scGetLibrary().map((card) => ({
+    id: card.id,
+    number: card.number || '',
+    name: card.name || card.id,
+    type: card.type || '',
+    deck: card.deck,
+    category: card.category,
+    chapter: card.chapter,
+    rel: card.rel || '',
+    face: card.face || '',
+    notes: card.notes || '',
+    noteItems: Array.isArray(card.noteItems)
+      ? card.noteItems.map((item) => ({ key: String(item?.key || ''), value: String(item?.value || '') }))
+      : [],
+  }));
 }
 
-// 第 1 招：目录选择器（一次选整个文件夹，保留层级）。
-async function scPickViaDirectoryPicker() {
-  const picker = globalThis.showDirectoryPicker;
-  if (typeof picker !== 'function') return false;
-  let handle;
-  try {
-    handle = await picker.call(globalThis, { mode: 'read' });
-  } catch (error) {
-    if (error && (error.name === 'AbortError' || error.name === 'NotAllowedError')) {
-      scSetCardStatus('已取消', 'muted');
-      return true;
-    }
-    // 不是用户取消，说明这条路走不通，交给下一个方案。
-    console.warn(`[${SC_MODULE_DISPLAY_NAME}] 目录选择器不可用，改用文件选择`, error);
+function scBuildExportJson() {
+  const cards = scBuildExportCards();
+  return JSON.stringify({
+    format: SC_CARD_JSON_FORMAT,
+    version: SC_CARD_JSON_VERSION,
+    exportedAt: new Date().toISOString(),
+    count: cards.length,
+    cards,
+  }, null, 2);
+}
+
+// 本地时间戳：story-cards-20261020-153045.json（排序友好，同一天多次导出不重名）。
+function scExportFileName(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  const d = date instanceof Date && Number.isFinite(date.getTime()) ? date : new Date();
+  return `story-cards-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+    + `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+}
+
+// 触发浏览器下载。宿主不支持 Blob / URL 时返回 false，由调用方提示。
+function scDownloadTextFile(text, fileName) {
+  const BlobCtor = globalThis.Blob;
+  const urlApi = globalThis.URL;
+  const doc = globalThis.document;
+  if (typeof BlobCtor !== 'function' || !urlApi || typeof urlApi.createObjectURL !== 'function' || !doc) {
     return false;
   }
-  scSetCardStatus('正在读取文件夹…', 'muted');
-  const files = [];
-  const walk = async (dir) => {
-    for await (const entry of dir.values()) {
-      if (files.length >= SC_CARD_FILE_MAX_COUNT) return;
-      if (entry.kind === 'file') {
-        if (/\.md$/i.test(entry.name)) {
-          const file = await entry.getFile();
-          // 补一个 webkitRelativePath，让层级推断和 input 方案走同一条路。
-          try {
-            Object.defineProperty(file, 'webkitRelativePath', {
-              value: dir.name + '/' + entry.name, configurable: true,
-            });
-          } catch (error) { /* 定义不上也不影响：兜底用文件名 */ }
-          files.push(file);
-        }
-      } else if (entry.kind === 'directory') {
-        await walk(entry);
-      }
-    }
-  };
+  let url = '';
+  let anchor = null;
   try {
-    await walk(handle);
-  } catch (error) {
-    console.error(`[${SC_MODULE_DISPLAY_NAME}] 遍历文件夹失败`, error);
-    scSetCardStatus('读取文件夹失败：' + String(error?.message || error), 'error');
+    url = urlApi.createObjectURL(new BlobCtor([text], { type: 'application/json;charset=utf-8' }));
+    anchor = doc.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.style.display = 'none';
+    doc.body.appendChild(anchor);
+    if (typeof anchor.click !== 'function') return false;
+    anchor.click();
     return true;
+  } catch (error) {
+    console.error(`[${SC_MODULE_DISPLAY_NAME}] 导出失败`, error);
+    return false;
+  } finally {
+    if (anchor && anchor.parentNode) anchor.remove();
+    if (url && typeof urlApi.revokeObjectURL === 'function') {
+      // 立刻 revoke 会让部分内核来不及取数据，等一拍再释放。
+      setTimeout(() => {
+        try {
+          urlApi.revokeObjectURL(url);
+        } catch (error) { /* 已释放就忽略 */ }
+      }, 1000);
+    }
   }
-  return scHandlePickedFiles(files, true);
 }
 
-// 第 2 / 3 招：隐藏的 <input type="file">，先试目录、不行再试多选文件。
-function scEnsureFileInput(useDirectory) {
-  let input = scEl(SC_FILE_INPUT_ID);
+// 点「导出卡片」走这里。
+function scHandleExportCards() {
+  const cards = scBuildExportCards();
+  if (cards.length === 0) {
+    scSetCardStatus('卡库是空的，没有可导出的卡牌', 'muted');
+    scToast('warning', '卡库是空的，没有可导出的卡牌');
+    return;
+  }
+  const customCount = scGetCustomCards().length;
+  const builtinCount = cards.length - customCount;
+  const summary = `已导出 ${cards.length} 张（内置 ${builtinCount}，导入 ${customCount}）`;
+  const fileName = scExportFileName(new Date());
+  if (!scDownloadTextFile(scBuildExportJson(), fileName)) {
+    const error = '当前宿主不支持文件下载';
+    scSetCardStatus(`导出失败：${error}`, 'error');
+    scToast('warning', `导出失败：${error}`);
+    return;
+  }
+  scSetCardStatus(`已导出 ${cards.length} 张 → ${fileName}`, 'ok');
+  scToast('success', summary);
+}
+
+// 隐藏的 <input type="file">，只收 .json。
+function scEnsureImportInput() {
+  let input = scEl(SC_IMPORT_FILE_INPUT_ID);
   if (!input) {
     input = scCreate('input', 'sc-file-input');
     input.type = 'file';
-    input.id = SC_FILE_INPUT_ID;
-    input.multiple = true;
+    input.id = SC_IMPORT_FILE_INPUT_ID;
+    input.accept = '.json,application/json';
     input.style.display = 'none';
     input.addEventListener('change', () => {
-      const files = input.files;
+      const file = input.files && input.files[0];
       input.value = '';
-      if (!files || files.length === 0) return;
-      scHandlePickedFiles(Array.from(files), false);
+      if (file) scHandlePickedJsonFile(file);
     });
     document.body.appendChild(input);
-  }
-  if (useDirectory) {
-    input.setAttribute('webkitdirectory', '');
-    input.setAttribute('directory', '');
-  } else {
-    input.removeAttribute('webkitdirectory');
-    input.removeAttribute('directory');
   }
   return input;
 }
 
-// 统一入口：点「加载卡牌」走这里。
-async function scHandleLoadCards() {
-  try {
-    const handled = await scPickViaDirectoryPicker();
-    if (handled) return;
-  } catch (error) {
-    console.warn(`[${SC_MODULE_DISPLAY_NAME}] 目录选择失败`, error);
-  }
-  // 回退：优先目录选择，宿主不支持 webkitdirectory 时退化成多选文件。
-  const input = scEnsureFileInput(true);
-  const supportsDirectory = 'webkitdirectory' in input || 'directory' in input;
-  if (!supportsDirectory) scEnsureFileInput(false);
-  scSetCardStatus(supportsDirectory ? '请选择卡牌文件夹…' : '请选择卡牌 .md 文件…', 'muted');
-  input.click();
-}
-
-// 收到文件后：过滤 → 读取 → 解析 → 入库。
-async function scHandlePickedFiles(fileList, fromDirectoryPicker) {
-  const filtered = scFilterCardFiles(fileList);
-  if (filtered.usable.length === 0) {
-    scSetCardStatus('没找到 .md 卡牌文件', 'error');
-    scToast('warning', '没找到 .md 卡牌文件');
+// 收到 JSON 文件后：校验大小 → 读文本 → 导入。
+async function scHandlePickedJsonFile(file) {
+  const size = Number(file.size);
+  if (Number.isFinite(size) && size > SC_CARD_JSON_MAX_BYTES) {
+    const limitMb = Math.round(SC_CARD_JSON_MAX_BYTES / (1024 * 1024));
+    const error = `文件太大（上限 ${limitMb} MB）`;
+    scSetCardStatus(`导入失败：${error}`, 'error');
+    scToast('warning', `导入失败：${error}`);
     return;
   }
-  scSetCardStatus(`正在解析 ${filtered.usable.length} 个文件…`, 'muted');
-  const { cards, failed } = await scParseCardFiles(filtered.usable);
-  scApplyLoadedCards(cards, {
-    skippedCount: filtered.skippedCount,
-    skippedBig: filtered.skippedBig,
-    truncated: filtered.truncated,
-    failed: failed.length,
-  });
+  scSetCardStatus(`正在读取 ${file.name || 'JSON 文件'}…`, 'muted');
+  let text;
+  try {
+    text = await scReadFileText(file);
+  } catch (error) {
+    const message = String(error?.message || error);
+    scSetCardStatus(`读取失败：${message}`, 'error');
+    scToast('warning', `读取失败：${message}`);
+    return;
+  }
+  scImportCardsFromText(text);
+}
+
+// 点「导入卡片」走这里。
+function scHandleImportCards() {
+  const input = scEnsureImportInput();
+  scSetCardStatus('请选择卡牌 .json 文件…', 'muted');
+  input.click();
 }
 
 
@@ -8213,6 +8094,8 @@ function scOpenPanel() {
   panel.classList.add('sc-panel--open');
   panel.setAttribute('aria-hidden', 'false');
   scRenderScopeTree();
+  // 概况行只在没有操作结果时补画，别把「已导出 …」这类提示顶掉。
+  scRefreshCardStatus();
 }
 
 function scClosePanel() {
@@ -8255,22 +8138,23 @@ function scCreatePanel() {
 
   const body = scCreate('div', 'sc-panel__body');
 
-  // 加载卡牌：把磁盘上的卡牌文件夹 / .md 文件临时并进卡库（存在设置里，随酒馆设置持久化）。
+  // 导入 / 导出卡片：整库存成一份 JSON，换设备或备份时带走。
   const cardSection = scCreate('div', 'sc-cards');
   const cardRow = scCreate('div', 'sc-cards__row');
-  const loadButton = scCreate('button', 'sc-button sc-button--primary');
-  loadButton.id = SC_LOAD_CARDS_BUTTON_ID;
-  loadButton.type = 'button';
-  loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i><span>加载卡牌</span>';
-  loadButton.title = '选择一个卡牌文件夹（<卡组>/<分类>/<回目>/*.md）或一批 .md 文件，解析后并入卡库';
-  loadButton.addEventListener('click', () => { void scHandleLoadCards(); });
-  const clearButton = scCreate('button', 'sc-button', '移除加载');
-  clearButton.id = SC_CLEAR_CARDS_BUTTON_ID;
-  clearButton.type = 'button';
-  clearButton.title = '移除通过「加载卡牌」并入的卡牌，回到构建期卡库';
-  clearButton.addEventListener('click', () => scHandleClearCustomCards());
-  cardRow.appendChild(loadButton);
-  cardRow.appendChild(clearButton);
+  const importButton = scCreate('button', 'sc-button sc-button--primary');
+  importButton.id = SC_IMPORT_CARDS_BUTTON_ID;
+  importButton.type = 'button';
+  importButton.innerHTML = '<i class="fa-solid fa-file-import"></i><span>导入卡片</span>';
+  importButton.title = '选择一个卡牌 .json 文件，解析后并入卡库（同卡号覆盖）';
+  importButton.addEventListener('click', () => { void scHandleImportCards(); });
+  const exportButton = scCreate('button', 'sc-button');
+  exportButton.id = SC_EXPORT_CARDS_BUTTON_ID;
+  exportButton.type = 'button';
+  exportButton.innerHTML = '<i class="fa-solid fa-file-export"></i><span>导出卡片</span>';
+  exportButton.title = '把当前卡库（内置 + 已导入）导出成一个 .json 文件';
+  exportButton.addEventListener('click', () => { void scHandleExportCards(); });
+  cardRow.appendChild(importButton);
+  cardRow.appendChild(exportButton);
   const cardStatus = scCreate('div', 'sc-cards__status');
   cardStatus.id = SC_CARD_STATUS_ID;
   cardSection.appendChild(cardRow);
@@ -8630,14 +8514,14 @@ function scBuildCheckbox(state, onToggle, ariaLabel) {
   return wrap;
 }
 
-// 统计子树里被勾选的叶子数与总叶子数（回目数）。
+// 统计子树里被勾选的张数与总张数。
 function scCountSubtree(settings, deckName, categories) {
   let selected = 0;
   let total = 0;
   for (const category of categories) {
     for (const chapter of category.chapters) {
-      total += 1;
-      if (scIsLeafSelected(settings, deckName, category.name, chapter.name)) selected += 1;
+      total += chapter.total;
+      if (scIsLeafSelected(settings, deckName, category.name, chapter.name)) selected += chapter.total;
     }
   }
   return { selected, total };
@@ -8651,7 +8535,7 @@ function scRenderScopeTree() {
   tree.textContent = '';
 
   if (scopeTree.length === 0) {
-    const empty = scCreate('div', 'sc-tree__empty', '卡库是空的。点上面「加载卡牌」选一个卡牌文件夹，或把卡牌放进 cards/<卡组>/<分类>/<回目>/ 后运行 node build.js。');
+    const empty = scCreate('div', 'sc-tree__empty', '卡库是空的。点上面「导入卡片」选一个卡牌 .json 文件，或把卡牌放进 cards/<卡组>/<分类>/<回目>/ 后运行 node build.js。');
     tree.appendChild(empty);
     scRefreshSummary();
     return;
@@ -8682,7 +8566,7 @@ function scRenderScopeTree() {
       `卡组 ${deck.name}`,
     );
     const deckLabel = scCreate('span', 'sc-tree__label', `${deck.name}`);
-    const deckCount = scCreate('span', 'sc-tree__count', `${deckStats.selected}/${deck.total} 回 · ${deck.total} 张`);
+    const deckCount = scCreate('span', 'sc-tree__count', `${deckStats.selected}张/${deckStats.total}张`);
     deckRow.appendChild(caret);
     deckRow.appendChild(deckBox);
     deckRow.appendChild(deckLabel);
@@ -8710,7 +8594,7 @@ function scRenderScopeTree() {
           `分类 ${category.name}`,
         );
         const categoryLabel = scCreate('span', 'sc-tree__label', category.name);
-        const categoryCount = scCreate('span', 'sc-tree__count', `${categoryStats.selected}/${category.total} 回 · ${category.total} 张`);
+        const categoryCount = scCreate('span', 'sc-tree__count', `${categoryStats.selected}张/${categoryStats.total}张`);
         categoryRow.appendChild(categoryBox);
         categoryRow.appendChild(categoryLabel);
         categoryRow.appendChild(categoryCount);
@@ -8728,7 +8612,9 @@ function scRenderScopeTree() {
             `回目 ${chapter.name}`,
           );
           const chapterLabel = scCreate('span', 'sc-tree__label', chapter.name);
-          const chapterCount = scCreate('span', 'sc-tree__count', `${chapter.total} 张`);
+          const chapterSelected = scIsLeafSelected(settings, deck.name, category.name, chapter.name);
+          const chapterCount = scCreate('span', 'sc-tree__count',
+            `${chapterSelected ? chapter.total : 0}张/${chapter.total}张`);
           chapterRow.appendChild(chapterBox);
           chapterRow.appendChild(chapterLabel);
           chapterRow.appendChild(chapterCount);
@@ -8760,7 +8646,7 @@ function scRefreshSummary() {
   const remaining = settings.avoidRepeat === false ? pool.length : Math.max(0, pool.length - drawnInPool);
   const scopeText = unrestricted
     ? `全库随机（${pool.length} 张）`
-    : `${stats.selectedLeaves}/${stats.totalLeaves} 回 · ${pool.length} 张`;
+    : `${stats.selectedCards}张/${stats.totalCards}张`;
   summary.textContent = '';
   summary.appendChild(scCreate('span', 'sc-summary__scope', scopeText));
   const remain = scCreate('span', 'sc-summary__remain', `可抽 ${remaining} 张`);
@@ -8778,8 +8664,8 @@ function scSetResult(kind, text, detail) {
   if (detail) result.appendChild(scCreate('div', 'sc-result__detail', detail));
 }
 
-// ---------- 加载卡牌的状态行 ----------
-// 状态行有两种内容：操作结果（「加载 138 张…」，要留住）与卡库概况（「卡库 138 张」，
+// ---------- 卡牌状态行 ----------
+// 状态行有两种内容：操作结果（「导入 138 张…」，要留住）与卡库概况（「卡库 138 张」，
 // 随时可重画）。scRenderScopeTree 会反复触发概况重画，所以必须记住当前是不是操作结果，
 // 否则操作结果会被概况覆盖掉、玩家根本看不到。
 let scCardStatusIsAuto = true;
@@ -8793,7 +8679,7 @@ function scSetCardStatus(text, kind) {
   scCardStatusIsAuto = false;
 }
 
-// 画「卡库 N 张（内置 X + 加载 Y）」概况；正在显示操作结果时不覆盖。
+// 画「卡库 N 张（内置 X + 导入 Y）」概况；正在显示操作结果时不覆盖。
 function scRefreshCardStatus(force) {
   const status = scEl(SC_CARD_STATUS_ID);
   if (!status) return;
@@ -8802,7 +8688,7 @@ function scRefreshCardStatus(force) {
   const custom = scGetCustomCards().length;
   const total = scGetLibrary().length;
   status.textContent = custom > 0
-    ? `卡库 ${total} 张（内置 ${builtin} + 加载 ${custom}）`
+    ? `卡库 ${total} 张（内置 ${builtin} + 导入 ${custom}）`
     : `卡库 ${total} 张`;
   status.className = 'sc-cards__status';
   scCardStatusIsAuto = true;
@@ -8867,7 +8753,7 @@ async function scHandleDraw() {
     else if (settings.avoidRepeat !== false) notes.push(`本轮候选 ${outcome.candidates.length} 张`);
     scSetResult('ok', title, [bits, notes.join(' · ')].filter(Boolean).join('　|　'));
     scRefreshSummary();
-    // 抽卡后把卡牌状态行切回「卡库概况」：上一句「加载 N 张…」的任务已经完成，
+    // 抽卡后把卡牌状态行切回「卡库概况」：上一句「导入 N 张…」的任务已经完成，
     // 没必要一直占着状态行。
     scRefreshCardStatus(true);
     scLogInfo('已抽卡并发送', { card: title, strategy: sendResult.strategy });
@@ -9066,6 +8952,7 @@ async function scBootstrap() {
     scInstallHostEventSubscriptions(ctx);
     scStartHostEventWatchdog();
     scCreatePanel();
+    scRefreshCardStatus();
     scCreateFloatingButton();
     scApplyFloatingButtonVisibility();
     scRefreshSummary();

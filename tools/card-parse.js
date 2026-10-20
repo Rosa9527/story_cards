@@ -1,4 +1,4 @@
-// ===== 剧情抽卡（Story Cards）卡牌解析器（构建期与运行期共用）=====
+// ===== 剧情抽卡（Story Cards）卡牌解析器（构建期用）=====
 // 卡牌 Markdown 的结构（cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md）：
 //
 //   # C1-03 半盏灯
@@ -24,9 +24,8 @@
 // - 设计底稿等其它段落一律丢弃（那是给作者看的，不是给主模型的）；
 // - 段落缺失时降级为空串，绝不因为一张卡格式不标准就让整次构建失败。
 //
-// 本文件是普通脚本（非 ES module）：浏览器里由 index.js 直接拼接使用，Node 里由
-// build.js 通过 require 使用。两种环境共用同一份解析逻辑，保证「构建期写进数据的
-// 字段」与「运行期读数据的字段」永远同构。
+// 本文件是普通脚本（非 ES module）：由 build.js 通过 require 使用，把 cards/ 下的
+// .md 解析成 cards-data.js。运行期不再需要它——面板里的「导入卡片」直接读 JSON。
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) {

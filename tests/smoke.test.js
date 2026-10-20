@@ -119,6 +119,10 @@ class FakeElement {
     if (index >= 0) list.splice(index, 1);
     this.parentNode = null;
   }
+  removeChild(child) {
+    child.remove();
+    return child;
+  }
   addEventListener(type, handler) {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
     this.listeners.get(type).push(handler);
@@ -294,6 +298,8 @@ function boot(options = {}) {
   document._register(textarea);
   document._register(sendButton);
 
+  // 导出的下载链路：Blob + createObjectURL + <a download>。
+  const downloads = [];
   const sandbox = {
     console,
     document,
@@ -321,6 +327,17 @@ function boot(options = {}) {
     Map,
     Set,
     WeakMap,
+    Blob: class Blob {
+      constructor(parts, options) {
+        this.parts = parts;
+        this.type = (options && options.type) || '';
+        this.text = String((parts || []).join(''));
+      }
+    },
+    URL: {
+      createObjectURL(blob) { downloads.push(blob); return 'blob:mock/' + downloads.length; },
+      revokeObjectURL() {},
+    },
     Event: class Event { constructor(type, options) { this.type = type; this.bubbles = Boolean(options && options.bubbles); } },
     KeyboardEvent: class KeyboardEvent {
       constructor(type, options) { this.type = type; Object.assign(this, options || {}); }
@@ -334,7 +351,7 @@ function boot(options = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(indexSource, sandbox, { filename: 'index.js' });
-  return { sandbox, document, host, menu, textarea, sendButton };
+  return { sandbox, document, host, menu, textarea, sendButton, downloads };
 }
 
 // ---------- 1. 卡库 ----------
@@ -715,90 +732,209 @@ async function main() {
   clickCheckbox(findToggles(deckRows()[0])[0]);
   clickCheckbox(findToggles(deckRows()[0])[0]);
 
-  // ---------- 8. 加载卡牌 ----------
-  section('加载卡牌');
-  check('「加载卡牌」按钮存在', Boolean(env.document.getElementById('sc-load-cards')));
-  check('「移除加载」按钮存在', Boolean(env.document.getElementById('sc-clear-cards')));
+  // ---------- 7.5 计数一律「x张/x张」 ----------
+  section('计数显示');
+  env.sandbox.scOpenPanel();
+  const countOfRow = (node) => (node
+    ? node.find((child) => child.classList.contains('sc-tree__count'))
+    : null);
+  const allCountTexts = () => {
+    const out = [];
+    treeEl().walk((node) => {
+      if (node.classList.contains('sc-tree__count')) out.push(node.textContent);
+    });
+    return out;
+  };
+
+  // 先确保收起，让卡组行计数是「未勾选 / 总数」
+  const openedDeckRow = deckRows()[0];
+  if (chapterRows().length > 0) {
+    openedDeckRow.dispatch('click', { type: 'click', target: openedDeckRow, stopPropagation() {}, preventDefault() {} });
+  }
+  const deckCountCollapsed = countOfRow(deckRows()[0]);
+  check('卡组行计数是「x张/x张」格式',
+    deckCountCollapsed && /^\d+张\/\d+张$/.test(deckCountCollapsed.textContent),
+    deckCountCollapsed && deckCountCollapsed.textContent);
+  check('卡组行计数不带「回」', deckCountCollapsed && !deckCountCollapsed.textContent.includes('回'),
+    deckCountCollapsed && deckCountCollapsed.textContent);
+  check('未勾选时卡组行显示 0张/138张',
+    deckCountCollapsed && deckCountCollapsed.textContent === '0张/138张',
+    deckCountCollapsed && deckCountCollapsed.textContent);
+
+  // 展开后检查分类行与回目行
+  const rowToExpand = deckRows()[0];
+  rowToExpand.dispatch('click', { type: 'click', target: rowToExpand, stopPropagation() {}, preventDefault() {} });
+  const categoryCounts = [];
+  treeEl().walk((node) => {
+    if (node.classList.contains('sc-tree__row--category')) {
+      const count = countOfRow(node);
+      if (count) categoryCounts.push(count.textContent);
+    }
+  });
+  check('分类行计数都是「x张/x张」',
+    categoryCounts.length === 2 && categoryCounts.every((text) => /^\d+张\/\d+张$/.test(text)),
+    categoryCounts.join(' | '));
+  check('分类行合计 138 张',
+    categoryCounts.reduce((sum, text) => sum + Number(text.split('/')[1].replace('张', '')), 0) === 138,
+    categoryCounts.join(' | '));
+  const chapterCounts = [];
+  treeEl().walk((node) => {
+    if (node.classList.contains('sc-tree__row--chapter')) {
+      const count = countOfRow(node);
+      if (count) chapterCounts.push(count.textContent);
+    }
+  });
+  check('回目行计数都是「x张/x张」',
+    chapterCounts.length > 0 && chapterCounts.every((text) => /^\d+张\/\d+张$/.test(text)),
+    chapterCounts.slice(0, 3).join(' | '));
+
+  // 勾上一个回目后，各级计数应同步变化（选中数跟着张数走，不是回目数）
+  const firstChapterRow = chapterRows()[0];
+  clickCheckbox(findToggles(firstChapterRow)[0]);
+  const selectedCards = env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards;
+  const summaryText = env.document.getElementById('sc-scope-summary').textContent;
+  check('概况行是「x张/x张」格式', /^\d+张\/\d+张/.test(summaryText), summaryText);
+  check('概况行不含「回」字', !summaryText.includes('回'), summaryText);
+  const summarySelected = Number(summaryText.split('/')[0].replace('张', ''));
+  check('概况行选中张数与统计一致', summarySelected === selectedCards, summaryText + ' vs ' + selectedCards);
+  const deckAfterCheck = countOfRow(deckRows()[0]);
+  check('勾选后卡组行计数同步', deckAfterCheck && deckAfterCheck.textContent.split('/')[0]
+    === selectedCards + '张', deckAfterCheck && deckAfterCheck.textContent);
+  check('整棵树里没有残留的「回」计数',
+    allCountTexts().every((text) => !text.includes('回')), allCountTexts().join(' | '));
+  // 收尾：清空勾选
+  clickCheckbox(findToggles(deckRows()[0])[0]);
+  clickCheckbox(findToggles(deckRows()[0])[0]);
+
+  // ---------- 8. 导入 / 导出卡片 ----------
+  section('导入 / 导出卡片');
+  check('「导入卡片」按钮存在', Boolean(env.document.getElementById('sc-import-cards')));
+  check('「导出卡片」按钮存在', Boolean(env.document.getElementById('sc-export-cards')));
+  check('旧的加载 / 移除按钮已不在',
+    !env.document.getElementById('sc-load-cards') && !env.document.getElementById('sc-clear-cards'));
   check('卡库状态行显示张数', env.document.getElementById('sc-card-status').textContent.includes('138'),
     env.document.getElementById('sc-card-status').textContent);
 
-  // 解析一个卡牌文件夹结构（模拟 webkitRelativePath）
-  const fakeFile = (name, relativePath, text) => ({
-    name, webkitRelativePath: relativePath, size: text.length, text: async () => text,
-  });
-  const newCardText = [
-    '# X1-01 试作卡',
-    '',
-    '**类型**：测试 / 加载',
-    '**分类**：现实类',
-    '',
-    '## 卡面',
-    '',
-    '这是从磁盘加载进来的试作卡卡面。',
-    '',
-    '## 注意事项',
-    '',
-    '**合理化**：测试用。',
-    '',
-    '## 设计底稿',
-    '',
-    '不该出现在注入里。',
-  ].join('\n');
-  const files = [
-    fakeFile('X1-01-试作卡.md', '新卡组/现实类/第一回/X1-01-试作卡.md', newCardText),
-    fakeFile('说明.txt', '新卡组/说明.txt', '不是卡牌'),
-  ];
-  const parsedFiles = env.sandbox.scFilterCardFiles(files);
-  check('过滤只留 .md', parsedFiles.usable.length === 1 && parsedFiles.skippedCount === 1,
-    parsedFiles.usable.length + '/' + parsedFiles.skippedCount);
-  const parsed = await env.sandbox.scParseCardFiles(parsedFiles.usable);
-  check('解析出 1 张卡', parsed.cards.length === 1, String(parsed.cards.length));
-  const loaded = parsed.cards[0];
-  check('层级从路径推断：新卡组/现实类/第一回',
-    loaded.deck === '新卡组' && loaded.category === '现实类' && loaded.chapter === '第一回',
-    [loaded.deck, loaded.category, loaded.chapter].join('/'));
-  check('卡面解析正确', loaded.face.includes('试作卡卡面'));
-  check('设计底稿不进卡面', !loaded.face.includes('设计底稿') && !loaded.notes.includes('设计底稿'));
-
-  // 入库
-  const addResult = env.sandbox.scAddCustomCards(parsed.cards);
-  check('入库新增 1 张', addResult.added === 1 && addResult.total === 1, JSON.stringify(addResult));
-  check('合并后卡库 = 139 张', env.sandbox.scGetLibrary().length === 139,
+  const newCard = {
+    id: 'X1-01-试作卡',
+    number: 'X1-01',
+    name: '试作卡',
+    type: '测试 / 导入',
+    deck: '新卡组',
+    category: '现实类',
+    chapter: '第一回',
+    rel: '新卡组/现实类/第一回/X1-01-试作卡',
+    face: '这是导入进来的试作卡卡面。',
+    notes: '**合理化**：测试用。',
+    noteItems: [{ key: '合理化', value: '测试用。' }],
+  };
+  const importText = JSON.stringify({ format: 'story-cards', version: 1, cards: [newCard] });
+  const importResult = env.sandbox.scImportCardsFromText(importText);
+  check('导入 1 张（新增 1）', importResult.ok && importResult.added === 1 && importResult.replaced === 0,
+    JSON.stringify(importResult));
+  check('导入后卡库 = 139 张', env.sandbox.scGetLibrary().length === 139,
     String(env.sandbox.scGetLibrary().length));
   check('新卡组出现在范围树里',
     env.sandbox.scBuildScopeTree().some((deck) => deck.name === '新卡组'));
   check('新卡能被抽到', env.sandbox.scGetLibrary().some((card) => card.id === 'X1-01-试作卡'));
+  check('导入结果写进状态行', env.document.getElementById('sc-card-status').textContent.includes('导入'),
+    env.document.getElementById('sc-card-status').textContent);
 
-  // 覆盖同 id：自己改卡面后即时生效
-  const overwriteText = newCardText.replace('试作卡卡面', '改过的卡面');
-  const overwrite = await env.sandbox.scParseCardFiles([
-    fakeFile('X1-01-试作卡.md', '新卡组/现实类/第一回/X1-01-试作卡.md', overwriteText),
-  ]);
-  const overwriteResult = env.sandbox.scAddCustomCards(overwrite.cards);
-  check('同 id 覆盖而不是新增', overwriteResult.added === 0 && overwriteResult.replaced === 1,
+  // 覆盖同 id：自己改卡面后重新导入即时生效
+  const changedCard = Object.assign({}, newCard, { face: '改过的卡面' });
+  const overwriteResult = env.sandbox.scImportCardsFromText(JSON.stringify([changedCard]));
+  check('裸数组也能导入，且同 id 覆盖而不是新增',
+    overwriteResult.ok && overwriteResult.added === 0 && overwriteResult.replaced === 1,
     JSON.stringify(overwriteResult));
   check('覆盖后卡面已更新',
     env.sandbox.scGetLibrary().find((card) => card.id === 'X1-01-试作卡').face.includes('改过的卡面'));
   check('覆盖后总数仍是 139', env.sandbox.scGetLibrary().length === 139,
     String(env.sandbox.scGetLibrary().length));
 
-  // 加载的卡能正常参与抽卡与注入
+  // 缺层级字段：兜底到未分组 / 未分类 / 未分回，而不是被丢弃
+  const bareResult = env.sandbox.scImportCardsFromText(JSON.stringify({ cards: [{ id: 'bare-1', name: '光板卡' }] }));
+  const bareCard = env.sandbox.scGetLibrary().find((card) => card.id === 'bare-1');
+  check('缺层级字段的卡归到未分组', bareResult.ok && bareCard
+    && bareCard.deck === '未分组' && bareCard.category === '未分类' && bareCard.chapter === '未分回',
+    bareCard && [bareCard.deck, bareCard.category, bareCard.chapter].join('/'));
+  check('层级兜底后总数 = 140', env.sandbox.scGetLibrary().length === 140,
+    String(env.sandbox.scGetLibrary().length));
+
+  // 坏文件不能把卡库搞乱
+  const beforeBad = env.sandbox.scGetLibrary().length;
+  const badJson = env.sandbox.scImportCardsFromText('{ 这不是 json');
+  check('非法 JSON 被拒绝且卡库不变',
+    badJson.ok === false && env.sandbox.scGetLibrary().length === beforeBad, JSON.stringify(badJson));
+  const noCards = env.sandbox.scImportCardsFromText(JSON.stringify({ hello: 'world' }));
+  check('没有 cards 数组的文件被拒绝', noCards.ok === false && /cards/.test(noCards.error), noCards.error);
+  const emptyList = env.sandbox.scImportCardsFromText('[]');
+  check('空数组被拒绝', emptyList.ok === false && env.sandbox.scGetLibrary().length === beforeBad,
+    emptyList.error);
+
+  // 导入的卡能正常参与抽卡与注入
   const loadSettings = env.sandbox.scGetSettings();
   loadSettings.selectedLeaves = {};
   env.sandbox.scSetLeafSelected(loadSettings, '新卡组', '现实类', '第一回', true);
   const loadDraw = env.sandbox.scDrawCard(loadSettings, 'load-chat');
-  check('能在新卡组范围里抽到加载的卡', loadDraw.card && loadDraw.card.id === 'X1-01-试作卡',
+  check('能在新卡组范围里抽到导入的卡', loadDraw.card && loadDraw.card.id === 'X1-01-试作卡',
     loadDraw.card && loadDraw.card.id);
   const loadInject = env.sandbox.scBuildInjectionText(loadDraw.card);
-  check('加载的卡也能拼注入块', loadInject.includes('X1-01-试作卡') && loadInject.includes('改过的卡面'));
+  check('导入的卡也能拼注入块', loadInject.includes('X1-01-试作卡') && loadInject.includes('改过的卡面'));
   loadSettings.selectedLeaves = {};
 
-  // 清空
-  const clearedCustom = env.sandbox.scClearCustomCards();
-  check('移除加载的卡牌返回张数', clearedCustom === 1, String(clearedCustom));
-  check('移除后回到 138 张', env.sandbox.scGetLibrary().length === 138,
+  // 导出：快照 → JSON → 能原样再导入
+  const exportJson = env.sandbox.scBuildExportJson();
+  const exportData = JSON.parse(exportJson);
+  check('导出 JSON 带格式标识与版本',
+    exportData.format === 'story-cards' && exportData.version === 1, exportData.format + '/' + exportData.version);
+  check('导出张数与卡库一致', exportData.count === 140 && exportData.cards.length === 140,
+    exportData.count + '/' + exportData.cards.length);
+  check('导出条目含卡面与层级', exportData.cards.every((card) => card.id && card.deck && card.category
+    && card.chapter && typeof card.face === 'string'));
+  check('导出条目不带运行期标记 custom', exportData.cards.every((card) => card.custom === undefined));
+  const exportedCustom = env.sandbox.scGetCustomCards();
+  check('导出时自定义卡都在', exportedCustom.length === 2, String(exportedCustom.length));
+
+  // 下载链路：Blob → createObjectURL → <a download> → click
+  const downloadsBefore = env.downloads.length;
+  const fileName = env.sandbox.scExportFileName(new Date(2026, 9, 20, 15, 30, 45));
+  check('导出文件名带时间戳', fileName === 'story-cards-20261020-153045.json', fileName);
+  const downloaded = env.sandbox.scDownloadTextFile(exportJson, fileName);
+  check('导出触发了下载', downloaded === true && env.downloads.length === downloadsBefore + 1);
+  const downloadedBlob = env.downloads[env.downloads.length - 1];
+  check('下载内容是完整 JSON',
+    downloadedBlob.type.includes('application/json') && JSON.parse(downloadedBlob.text).count === 140);
+
+  env.sandbox.scHandleExportCards();
+  check('点导出会更新状态行', env.document.getElementById('sc-card-status').textContent.includes('已导出'),
+    env.document.getElementById('sc-card-status').textContent);
+
+  // 与内置完全一致的卡不重复写进设置：导出再导入一遍不会让卡库膨胀
+  const beforeReimport = env.sandbox.scGetCustomCards().length;
+  const reimport = env.sandbox.scImportCardsFromText(exportJson);
+  check('重复导入同一份导出不会新增自定义卡',
+    reimport.ok && env.sandbox.scGetCustomCards().length === beforeReimport, JSON.stringify(reimport));
+  check('重复导入时内置卡被识别为「与内置一致」', reimport.unchanged === 138, String(reimport.unchanged));
+  check('重复导入后总数仍是 140', env.sandbox.scGetLibrary().length === 140,
     String(env.sandbox.scGetLibrary().length));
-  check('移除后新卡组从范围树消失',
+
+  // 文件入口：大小上限与正常读取
+  await env.sandbox.scHandlePickedJsonFile({
+    name: 'huge.json', size: 17 * 1024 * 1024, text: async () => '[]',
+  });
+  check('超大 JSON 文件被拒绝',
+    env.document.getElementById('sc-card-status').textContent.includes('文件太大'),
+    env.document.getElementById('sc-card-status').textContent);
+  await env.sandbox.scHandlePickedJsonFile({
+    name: 'ok.json', size: 100, text: async () => JSON.stringify({ cards: [newCard] }),
+  });
+  check('文件入口能导入 JSON', env.sandbox.scGetLibrary().some((card) => card.id === 'X1-01-试作卡'));
+
+  // 清空导入，回到构建期卡库（数据层）
+  env.sandbox.scGetSettings().customCards = [];
+  check('清空导入后回到 138 张', env.sandbox.scGetLibrary().length === 138,
+    String(env.sandbox.scGetLibrary().length));
+  check('清空导入后新卡组从范围树消失',
     !env.sandbox.scBuildScopeTree().some((deck) => deck.name === '新卡组'));
 
   // ---------- 9. 勾选框实现契约 ----------

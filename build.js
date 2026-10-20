@@ -35,19 +35,16 @@ const outPath = path.join(root, 'index.js');
 // --stdout 模式下，卡库内容在这里生成后直接参与拼接（不依赖磁盘上的产物）。
 let inMemoryCardsText = '';
 
-// 拼接顺序必须与依赖关系一致：常量 → 工具 → 宿主 → 卡牌解析器 → 卡库数据 →
-// 卡库逻辑 → 加载卡牌 → 注入 → 发送 → UI → 入口。每个文件都是普通脚本
+// 拼接顺序必须与依赖关系一致：常量 → 工具 → 宿主 → 卡库数据 →
+// 卡库逻辑 → 导入导出 → 注入 → 发送 → UI → 入口。每个文件都是普通脚本
 // （非 ES module），顶层 const/function 进入全局作用域，顺序保证「被调用时已定义」即可。
 const FILES = [
   'js/constants.js',
   'js/utils.js',
   'js/host.js',
-  // 卡牌解析器：构建期由 build.js require，运行期由「加载卡牌」调用
-  // （globalThis.SC_CARD_PARSE）。两边共用同一份实现，解析规则不会漂移。
-  'tools/card-parse.js',
   'js/cards-data.js',
   'js/cards.js',
-  'js/card-load.js',
+  'js/card-io.js',
   'js/inject.js',
   'js/send.js',
   'js/ui-shell.js',
@@ -168,7 +165,7 @@ function renderCardsData(cards) {
     `// 生成时间: ${stamp} · 卡牌数: ${cards.length}`,
     '// 来源: cards/<卡组>/<分类>/<回目>/<卡号>-<卡名>.md',
     '// 重新生成: node build.js（或 node build.js --cards）',
-    '// 卡面解析规则见 tools/card-parse.js，构建期与运行期共用同一份实现。',
+    '// 卡面解析规则见 tools/card-parse.js（构建期使用）。',
   ].join('\n');
   const json = JSON.stringify(cards, null, 2);
   return `${header}\n(function () {\n  const cards = ${json};\n  for (const card of cards) Object.freeze(card);\n  globalThis.STORY_CARDS_LIBRARY = Object.freeze(cards);\n})();\n`;
