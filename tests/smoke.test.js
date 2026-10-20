@@ -558,6 +558,8 @@ check('合理化排在第一条且标注最重要',
   injectText.includes('1. 合理化（最重要）'), injectText.split('\n').find((l) => l.startsWith('1. ')));
 check('合理化要求「宁可玩家不出场，也不硬塞」',
   injectText.includes('宁可让玩家完全不出场') && injectText.includes('也不要把玩家硬塞进场景'));
+check('合理化允许「宁编新人物，不套已有角色」',
+  injectText.includes('宁可新编一个人物') && injectText.includes('也不要把卡强行套在已有角色身上'));
 check('文字风格服从正文既有文风',
   injectText.includes('文字风格') && injectText.includes('不要照搬它的文风')
     && injectText.includes('不改变正文风格'));
