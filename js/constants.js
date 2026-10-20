@@ -20,6 +20,9 @@ const SC_EXPORT_CARDS_BUTTON_ID = 'sc-export-cards';
 const SC_CARD_STATUS_ID = 'sc-card-status';
 const SC_IMPORT_FILE_INPUT_ID = 'sc-import-file-input';
 const SC_RESULT_ID = 'sc-result';
+const SC_VIEW_INJECT_BUTTON_ID = 'sc-view-inject';
+const SC_INJECT_PREVIEW_ID = 'sc-inject-preview';
+const SC_INJECT_COPY_BUTTON_ID = 'sc-inject-copy';
 const SC_MENU_ICON_CLASS = 'fa-solid fa-clone';
 const SC_DRAW_ICON_CLASS = 'fa-solid fa-dice';
 
@@ -115,5 +118,7 @@ const SC_FLOAT_RESIZE_HOOK_KEY = '__story_cards_float_resize__';
 
 // 本轮抽卡记录（内存态，供重新生成时重放注入）。
 const SC_LAST_DRAW_KEY = '__story_cards_last_draw__';
+// 最近一次注入的原文（内存态，供面板「查看注入的提示词」显示）。
+const SC_LAST_INJECT_KEY = '__story_cards_last_inject__';
 // 注入超时清理的定时器句柄（避免重复排程 / 清理后残留）。
 const SC_INJECT_EXPIRY_TIMER_KEY = '__story_cards_inject_expiry__';

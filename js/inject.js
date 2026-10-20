@@ -69,11 +69,33 @@ function scApplyInjection(card, ctx) {
     api.setExtensionPrompt(SC_INJECT_KEY, '', api.inChat, SC_INJECT_DEPTH);
     api.setExtensionPrompt(SC_INJECT_KEY, text, api.inChat, SC_INJECT_DEPTH, false, api.systemRole);
     scScheduleInjectionExpiry();
+    // 记一份原文，供面板「查看注入的提示词」显示（宿主槽位读不回来时也有一份可看）。
+    scRecordLastInjection(card, text, api);
     return true;
   } catch (error) {
     console.warn(`[${SC_MODULE_DISPLAY_NAME}] 写入提示词注入失败`, error);
     return false;
   }
+}
+
+// 记下最近一次注入的原文与它的落点参数。纯内存态，不落盘。
+function scRecordLastInjection(card, text, api) {
+  globalThis[SC_LAST_INJECT_KEY] = {
+    text: String(text || ''),
+    cardId: String(card?.id || ''),
+    cardName: String(card?.name || ''),
+    at: new Date().toISOString(),
+    inChat: api ? api.inChat : SC_INJECT_TYPE_IN_CHAT,
+    depth: SC_INJECT_DEPTH,
+    systemRole: api ? api.systemRole : SC_INJECT_ROLE_SYSTEM,
+  };
+}
+
+// 取最近一次注入记录；没有就返回 null。
+function scGetLastInjection() {
+  const record = globalThis[SC_LAST_INJECT_KEY];
+  if (!record || typeof record !== 'object' || !record.text) return null;
+  return record;
 }
 
 // 兜底过期：正常情况下 generationEnded / generationStopped 会清空槽位。

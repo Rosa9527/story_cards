@@ -379,6 +379,63 @@
 .sc-result--ok .sc-result__main { color: var(--sc-ok); }
 .sc-result--error .sc-result__main { color: var(--sc-err); }
 
+/* ---------- 查看注入的提示词 ---------- */
+.sc-inject {
+  margin-top: 10px;
+}
+
+.sc-inject .sc-button {
+  width: 100%;
+}
+
+/* 展开态：按钮高亮，提示当前是「已打开」。 */
+.sc-button--active {
+  border-color: var(--sc-accent);
+  color: var(--sc-accent);
+  background: rgba(201, 162, 39, 0.1);
+}
+
+.sc-inject__preview {
+  margin-top: 8px;
+}
+
+.sc-inject__empty {
+  color: var(--sc-muted);
+  font-size: 12px;
+}
+
+.sc-inject__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 6px;
+  color: var(--sc-muted);
+  font-size: 11px;
+}
+
+.sc-inject__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.sc-inject__text {
+  margin: 0;
+  padding: 8px;
+  max-height: 32vh;
+  overflow: auto;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--sc-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 /* ---------- 悬浮按钮（可自由拖动 / 长按隐藏） ---------- */
 /* 位置由 JS 用 left/top 控制（默认值只是兜底），所以这里不写 right/bottom。
    尺寸与 SC_FLOAT_SIZE 保持一致（38px），比早期版本小一圈，不挡聊天内容。 */

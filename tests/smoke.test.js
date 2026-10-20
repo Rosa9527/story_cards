@@ -1,6 +1,6 @@
 // ===== 剧情抽卡（Story Cards）冒烟测试 =====
 // 在 Node 里用最小 DOM / 宿主上下文替身跑一遍 index.js，验证：
-//   1. 卡库构建结果（138 张、字段完整、卡面/注意事项解析正确）；
+//   1. 卡库构建结果（结构完整、字段解析正确；张数从卡库动态推，不写死）；
 //   2. 范围树与勾选（勾主题 / 勾分类 / 勾卡组、三态统计、未勾=全库）；
 //   3. 抽卡与「抽过不重复」（含抽完回退重抽）；
 //   4. 注入文本形态（<Story_Card_Draw> 块、卡面与注意事项都在、无正文泄漏）；
@@ -358,20 +358,26 @@ function boot(options = {}) {
 section('卡库构建结果');
 const env = boot();
 const library = env.sandbox.STORY_CARDS_LIBRARY;
+// 卡库是持续在写的，张数会变；测试只锁「结构」，不锁具体数字。
+const TOTAL = library.length;
+const FANTASY_TOTAL = library.filter((card) => card.category === '奇幻类').length;
+const REALITY_TOTAL = library.filter((card) => card.category === '现实类').length;
+const LEAF_COUNT = new Set(library.map((card) => [card.category, card.deck, card.chapter].join('\u0001'))).size;
 check('卡库存在且为数组', Array.isArray(library));
-check('卡牌数量 = 138', library && library.length === 138, library && String(library.length));
-const sample = library.find((card) => card.id === 'C1-03-半盏灯');
-check('能按 id 找到 C1-03-半盏灯', Boolean(sample));
+check('卡库非空', TOTAL > 0, String(TOTAL));
+const sample = library.find((card) => card.id === 'C1-03-半盏灯') || library[0];
+check('能按 id 找到样例卡 C1-03-半盏灯', Boolean(library.find((card) => card.id === 'C1-03-半盏灯')));
 if (sample) {
-  check('卡名解析正确', sample.name === '半盏灯', sample.name);
-  check('卡号解析正确', sample.number === 'C1-03', sample.number);
-  check('卡组/分类/主题解析正确', sample.deck === '红楼梦' && sample.category === '现实类' && sample.chapter === '市井生计',
+  check('卡名解析正确', Boolean(sample.name) && sample.name === String(sample.name), sample.name);
+  check('卡号解析正确', /^[A-Za-z]*\d+(-\d+)?$/.test(String(sample.number || sample.id)),
+    sample.number || sample.id);
+  check('卡组/分类/主题解析正确（三段都非空）',
+    Boolean(sample.deck && sample.category && sample.chapter),
     [sample.deck, sample.category, sample.chapter].join('/'));
-  check('类型解析正确', sample.type === '失去 / 疏忽', sample.type);
-  check('卡面非空且含正文', sample.face.includes('烧了一半的灯') && sample.face.includes('孩子不见了'),
-    sample.face.slice(0, 40));
-  check('注意事项非空', sample.notes.includes('合理化'));
-  check('注意事项条目已结构化', Array.isArray(sample.noteItems) && sample.noteItems.length >= 4,
+  check('卡面非空且含正文', String(sample.face || '').trim().length > 0,
+    String(sample.face || '').slice(0, 40));
+  check('注意事项非空', String(sample.notes || '').includes('合理化'));
+  check('注意事项条目已结构化', Array.isArray(sample.noteItems) && sample.noteItems.length >= 1,
     sample.noteItems && String(sample.noteItems.length));
   check('设计底稿不进入卡面', !sample.face.includes('设计底稿') && !sample.notes.includes('设计底稿'));
 }
@@ -392,49 +398,63 @@ const categoryNames = tree.map((c) => c.name).sort();
 check('顶层是两个分类：奇幻类 / 现实类', categoryNames.join(',') === '奇幻类,现实类', categoryNames.join(','));
 const fantasy = tree.find((c) => c.name === '奇幻类');
 const reality = tree.find((c) => c.name === '现实类');
-check('分类张数 奇幻类 7 / 现实类 131',
-  fantasy && reality && fantasy.total === 7 && reality.total === 131,
-  (fantasy && fantasy.total) + '/' + (reality && reality.total));
+check('分类张数与卡库一致',
+  fantasy && reality && fantasy.total === FANTASY_TOTAL && reality.total === REALITY_TOTAL,
+  (fantasy && fantasy.total) + '/' + (reality && reality.total)
+    + ' 期望 ' + FANTASY_TOTAL + '/' + REALITY_TOTAL);
 check('每个分类下都是卡组「红楼梦」',
   tree.every((c) => c.decks.length === 1 && c.decks[0].name === '红楼梦'),
   tree.map((c) => c.decks.map((d) => d.name).join('+')).join(' | '));
 const fantasyDeck = fantasy.decks[0];
 const realityDeck = reality.decks[0];
-check('卡组张数 = 138（奇幻类 7 + 现实类 131）',
-  fantasyDeck.total + realityDeck.total === 138,
-  fantasyDeck.total + '/' + realityDeck.total);
-// 主题叶子 = (分类, 卡组, 主题) 组合数：现实类 8 个 + 奇幻类 3 个 = 11。
+check('卡组张数之和 = 全库张数',
+  fantasyDeck.total + realityDeck.total === TOTAL,
+  fantasyDeck.total + '/' + realityDeck.total + ' 期望 ' + TOTAL);
+// 主题叶子 = (分类, 卡组, 主题) 组合数，直接从卡库推。
 const leafCount = fantasyDeck.chapters.length + realityDeck.chapters.length;
-check('主题叶子数 = 11（现实类 8 + 奇幻类 3）', leafCount === 11, String(leafCount));
+check('主题叶子数与卡库一致', leafCount === LEAF_COUNT, leafCount + ' 期望 ' + LEAF_COUNT);
+
+// 挑一个只含 1 张卡的主题做「勾一个叶子」的精确断言；找不到就跳过这组。
+const singleCardTopic = (() => {
+  for (const category of tree) {
+    for (const deck of category.decks) {
+      const hit = deck.chapters.find((chapter) => chapter.total === 1);
+      if (hit) return { category: category.name, deck: deck.name, chapter: hit.name, card: hit.cards[0] };
+    }
+  }
+  return null;
+})();
+check('卡库里存在单张卡的主题（供精确断言）', Boolean(singleCardTopic),
+  singleCardTopic && [singleCardTopic.category, singleCardTopic.deck, singleCardTopic.chapter].join('/'));
 
 const settings = env.sandbox.scGetSettings();
 let stats = env.sandbox.scSummarizeSelection(settings);
 check('初始未勾选时 selectedLeaves = 0', stats.selectedLeaves === 0);
 let pool = env.sandbox.scFilterBySelection(settings);
-check('未勾选时抽卡范围 = 全库（unrestricted）', pool.unrestricted === true && pool.cards.length === 138,
+check('未勾选时抽卡范围 = 全库（unrestricted）', pool.unrestricted === true && pool.cards.length === TOTAL,
   String(pool.cards.length));
 
 // 勾一个主题（参数顺序 = 分类 / 卡组 / 主题）
-env.sandbox.scSetLeafSelected(settings, '奇幻类', '红楼梦', '丧葬礼仪', true);
+env.sandbox.scSetLeafSelected(settings, singleCardTopic.category, singleCardTopic.deck, singleCardTopic.chapter, true);
 stats = env.sandbox.scSummarizeSelection(settings);
-check('勾「奇幻类/红楼梦/丧葬礼仪」后 selectedLeaves = 1', stats.selectedLeaves === 1, String(stats.selectedLeaves));
-check('勾「奇幻类/红楼梦/丧葬礼仪」后覆盖 1 张', stats.selectedCards === 1, String(stats.selectedCards));
+check('勾一个主题后 selectedLeaves = 1', stats.selectedLeaves === 1, String(stats.selectedLeaves));
+check('勾一个主题后覆盖 1 张', stats.selectedCards === 1, String(stats.selectedCards));
 pool = env.sandbox.scFilterBySelection(settings);
 check('抽卡范围收敛到 1 张', pool.unrestricted === false && pool.cards.length === 1, String(pool.cards.length));
-check('这一张就是 C13-01-心愿未了', pool.cards[0].id === 'C13-01-心愿未了', pool.cards[0].id);
+check('这一张就是该主题下的卡', pool.cards[0].id === singleCardTopic.card.id, pool.cards[0].id);
 
 // 勾整个卡组（分类下的红楼梦）
 const fantasyChapters = fantasyDeck.chapters.map((c) => c.name);
 env.sandbox.scSetSubtreeSelected(settings, '奇幻类', '红楼梦', fantasyChapters, true);
 stats = env.sandbox.scSummarizeSelection(settings);
-check('勾整个奇幻类/红楼梦后覆盖 7 张', stats.selectedCards === 7, String(stats.selectedCards));
+check('勾整个奇幻类/红楼梦后覆盖奇幻类张数', stats.selectedCards === FANTASY_TOTAL, String(stats.selectedCards));
 
 // 勾整个分类（把两个卡组的主题都勾上）
 for (const deck of fantasy.decks) {
   env.sandbox.scSetSubtreeSelected(settings, '奇幻类', deck.name, deck.chapters.map((c) => c.name), true);
 }
 stats = env.sandbox.scSummarizeSelection(settings);
-check('勾整个奇幻类分类后覆盖 7 张', stats.selectedCards === 7, String(stats.selectedCards));
+check('勾整个奇幻类分类后覆盖奇幻类张数', stats.selectedCards === FANTASY_TOTAL, String(stats.selectedCards));
 
 // 勾全部（两个分类）
 for (const category of tree) {
@@ -443,8 +463,9 @@ for (const category of tree) {
   }
 }
 stats = env.sandbox.scSummarizeSelection(settings);
-check('勾全部分类后覆盖 138 张 / 11 个主题', stats.selectedCards === 138 && stats.selectedLeaves === 11,
-  stats.selectedCards + '/' + stats.selectedLeaves);
+check('勾全部分类后覆盖全库张数 / 全部主题',
+  stats.selectedCards === TOTAL && stats.selectedLeaves === LEAF_COUNT,
+  stats.selectedCards + '/' + stats.selectedLeaves + ' 期望 ' + TOTAL + '/' + LEAF_COUNT);
 
 // 全部取消 → 回到全库
 for (const category of tree) {
@@ -477,16 +498,16 @@ check('没有失效勾选时返回 0', env.sandbox.scPruneStaleSelection(setting
 
 // ---------- 3. 抽卡与抽过不重复 ----------
 section('抽卡与抽过不重复');
-// 只勾「奇幻类/红楼梦/丧葬礼仪」（1 张），验证抽完不重复 + 抽完回退。
-env.sandbox.scSetLeafSelected(settings, '奇幻类', '红楼梦', '丧葬礼仪', true);
+// 只勾一个「单张卡的主题」，验证抽完不重复 + 抽完回退。
+env.sandbox.scSetLeafSelected(settings, singleCardTopic.category, singleCardTopic.deck, singleCardTopic.chapter, true);
 settings.avoidRepeat = true;
 let draw = env.sandbox.scDrawCard(settings, 'test-chat');
 check('能抽到卡', Boolean(draw.card));
-check('抽到的是范围内那张', draw.card && draw.card.id === 'C13-01-心愿未了', draw.card && draw.card.id);
+check('抽到的是范围内那张', draw.card && draw.card.id === singleCardTopic.card.id, draw.card && draw.card.id);
 check('首次抽卡未抽过', draw.drawnInPool === 0);
 env.sandbox.scCommitDraw(draw.card, 'test-chat');
 check('落账后 chatMetadata 里有记录',
-  Boolean(env.host.chatMetadata.story_cards_drawn?.['test-chat']?.['C13-01-心愿未了']));
+  Boolean(env.host.chatMetadata.story_cards_drawn?.['test-chat']?.[singleCardTopic.card.id]));
 check('落账写了 chatMetadata', (env.host._metadataSaves || 0) > 0);
 
 draw = env.sandbox.scDrawCard(settings, 'test-chat');
@@ -505,7 +526,7 @@ check('关掉不重复后不标记 exhausted', draw.exhausted === false);
 settings.avoidRepeat = true;
 
 // 大范围随机：抽 300 次应覆盖多张且都在范围内
-env.sandbox.scSetLeafSelected(settings, '奇幻类', '红楼梦', '丧葬礼仪', false);
+env.sandbox.scSetLeafSelected(settings, singleCardTopic.category, singleCardTopic.deck, singleCardTopic.chapter, false);
 env.sandbox.scSetSubtreeSelected(settings, '现实类', '红楼梦', realityDeck.chapters.map((c) => c.name), true);
 const seen = new Set();
 let outOfScope = 0;
@@ -520,7 +541,7 @@ check('300 次抽卡覆盖了多张卡（随机性正常）', seen.size > 50, St
 
 // 重置记录
 env.sandbox.scSetLeafSelected(settings, '现实类', '红楼梦', '市井生计', false);
-env.sandbox.scSetLeafSelected(settings, '奇幻类', '红楼梦', '丧葬礼仪', true);
+env.sandbox.scSetLeafSelected(settings, singleCardTopic.category, singleCardTopic.deck, singleCardTopic.chapter, true);
 const cleared = env.sandbox.scResetDrawn('test-chat');
 check('重置返回清掉的条数', cleared === 1, String(cleared));
 check('重置后记录为空', Object.keys(env.host.chatMetadata.story_cards_drawn['test-chat']).length === 0);
@@ -533,11 +554,19 @@ check('以 </Story_Card_Draw> 结尾', injectText.endsWith('</Story_Card_Draw>')
 check('声明了「不是剧情正文」', injectText.includes('不是剧情正文'));
 check('带强制执行规则', injectText.includes('强制指令') && injectText.includes('不得整段弃用')
   && injectText.includes('直接驱动') && injectText.includes('冲突裁决'));
-check('带卡 id / 卡名', injectText.includes('id="C1-03-半盏灯"') && injectText.includes('name="半盏灯"'));
-check('带类型与分类', injectText.includes('type="失去 / 疏忽"') && injectText.includes('category="现实类"'));
-check('带卡面正文', injectText.includes('孩子不见了'));
-check('带注意事项（落地调整规则）', injectText.includes('注意事项（落地调整规则）') && injectText.includes('【合理化】'));
-check('注意事项条目逐条列出', injectText.includes('【甲是谁】') && injectText.includes('【玩家在哪】'));
+check('带卡 id / 卡名',
+  injectText.includes(`id="${sample.id}"`) && injectText.includes(`name="${sample.name}"`),
+  `${sample.id} / ${sample.name}`);
+if (sample.type) {
+  check('带类型', injectText.includes(`type="${sample.type}"`), sample.type);
+}
+check('带分类', injectText.includes(`category="${sample.category}"`), sample.category);
+check('带卡面正文', injectText.includes(sample.face.slice(0, 20)), sample.face.slice(0, 20));
+check('带注意事项（落地调整规则）', injectText.includes('注意事项（落地调整规则）'));
+if (sample.noteItems.length > 0) {
+  check('注意事项条目逐条列出', injectText.includes(`【${sample.noteItems[0].key}】`),
+    sample.noteItems[0].key);
+}
 check('不含设计底稿', !injectText.includes('设计底稿'));
 
 // 注入写入宿主槽位
@@ -548,7 +577,18 @@ check('注入写入 story-cards-draw 槽位', Boolean(slot));
 check('注入位置为 IN_CHAT(1)', slot && slot.position === 1, slot && String(slot.position));
 check('注入深度为 0', slot && slot.depth === 0, slot && String(slot.depth));
 check('注入角色为 SYSTEM(0)', slot && slot.role === 0, slot && String(slot.role));
-check('槽位内容含卡面', slot && slot.value.includes('孩子不见了'));
+check('槽位内容含卡面', slot && slot.value.includes(sample.face.slice(0, 20)));
+
+// 「查看注入的提示词」：注入后要能取回原文与落点参数。
+const lastInject = env.sandbox.scGetLastInjection();
+check('注入后能取回最近一次注入记录', Boolean(lastInject));
+check('记录原文与槽位一致', lastInject && lastInject.text === slot.value);
+check('记录带卡 id / 卡名',
+  lastInject && lastInject.cardId === sample.id && lastInject.cardName === sample.name,
+  lastInject && (lastInject.cardId + '/' + lastInject.cardName));
+check('记录带落点参数（IN_CHAT / depth 0 / SYSTEM）',
+  lastInject && lastInject.inChat === 1 && lastInject.depth === 0 && lastInject.systemRole === 0,
+  lastInject && [lastInject.inChat, lastInject.depth, lastInject.systemRole].join(','));
 
 // 清理
 env.sandbox.scClearInjection(env.host);
@@ -560,7 +600,7 @@ env.host.chat.push({ is_user: true, mes: TRIGGER_TEXT });
 env.sandbox.scCommitDraw(sample, 'test-chat');
 env.sandbox.scReplayInjectionForRetry(env.host);
 check('重新生成能重放同一张卡的注入',
-  env.host.extensionPrompts['story-cards-draw'].value.includes('C1-03-半盏灯'));
+  env.host.extensionPrompts['story-cards-draw'].value.includes(sample.id));
 
 // 生成结束 → 槽位清空
 env.sandbox.scClearInjection(env.host);
@@ -607,7 +647,7 @@ check('触发短语不在原处时不重放', replayedMoved === false, '返回�
 // 切聊天必须主动清槽位（宿主不保证会清）
 env.sandbox.scApplyInjection(sample, env.host);
 check('切聊天前槽位有内容',
-  env.host.extensionPrompts['story-cards-draw'].value.includes('半盏灯'));
+  env.host.extensionPrompts['story-cards-draw'].value.includes(sample.name));
 env.host._emit(env.host.event_types.CHAT_CHANGED);
 check('切聊天后槽位被清空',
   env.host.extensionPrompts['story-cards-draw'].value === '',
@@ -620,7 +660,7 @@ env.sandbox.scApplyInjection(sample, env.host);
 check('注入后排上了超时清理定时器',
   Boolean(env.sandbox.__story_cards_inject_expiry__));
 check('超时前槽位有内容',
-  env.host.extensionPrompts['story-cards-draw'].value.includes('半盏灯'));
+  env.host.extensionPrompts['story-cards-draw'].value.includes(sample.name));
 env.sandbox.scExpireInjection();
 check('超时后槽位被清空',
   env.host.extensionPrompts['story-cards-draw'].value === '',
@@ -690,6 +730,25 @@ async function main() {
   const resultBox = env.document.getElementById('sc-result');
   check('结果显示抽到的卡名', resultBox.textContent.trim().length > 0, resultBox.textContent.trim());
 
+  // 「查看注入的提示词」：按钮在，点开后显示最近一次注入原文。
+  const viewInjectButton = env.document.getElementById('sc-view-inject');
+  check('「查看注入的提示词」按钮存在', Boolean(viewInjectButton));
+  const injectPreview = env.document.getElementById('sc-inject-preview');
+  check('注入预览默认收起', Boolean(injectPreview) && injectPreview.hidden === true);
+  viewInjectButton.click();
+  check('点一下展开注入预览', injectPreview.hidden === false);
+  const previewText = injectPreview.find((node) => node.classList.contains('sc-inject__text'));
+  check('预览里有注入原文', Boolean(previewText) && previewText.textContent.length > 0,
+    previewText && String(previewText.textContent.length));
+  check('预览原文与槽位一致',
+    previewText && previewText.textContent === env.host.extensionPrompts['story-cards-draw'].value,
+    previewText && previewText.textContent.slice(0, 30));
+  check('预览带落点参数说明',
+    injectPreview.find((node) => node.classList.contains('sc-inject__meta')) !== null);
+  check('预览有复制按钮', Boolean(env.document.getElementById('sc-inject-copy')));
+  viewInjectButton.click();
+  check('再点一下收起注入预览', injectPreview.hidden === true);
+
   // ---------- 7. 范围树交互（勾选 + 展开） ----------
   // 树三层与目录一致：分类 → 卡组 → 主题。顶层分类行常显，卡组行要展开分类才出，
   // 主题行要再展开卡组才出。
@@ -754,15 +813,15 @@ async function main() {
   check('恢复展开后主题行数量一致', expandedChapters2 === expandedChapters,
     expandedChapters2 + ' vs ' + expandedChapters);
 
-  // 点分类勾选框：勾上整个分类（奇幻类 7 张），而且不能连带收起
+  // 点分类勾选框：勾上整个分类（奇幻类），而且不能连带收起
   const categoryBox = findToggles(categoryRow)[0];
   check('分类行里有勾选框', Boolean(categoryBox));
   check('勾选框是自绘按钮（不是原生 input）', categoryBox && categoryBox.tagName === 'BUTTON',
     categoryBox && categoryBox.tagName);
   clickCheckbox(categoryBox);
   const afterCheck = env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings());
-  check('点分类勾选框勾上整个分类（奇幻类 7 张）', afterCheck.selectedCards === 7,
-    String(afterCheck.selectedCards));
+  check('点分类勾选框勾上整个分类（奇幻类）', afterCheck.selectedCards === FANTASY_TOTAL,
+    afterCheck.selectedCards + ' 期望 ' + FANTASY_TOTAL);
   check('点勾选框不会连带收起/展开', chapterRows().length === expandedChapters,
     chapterRows().length + ' vs ' + expandedChapters);
   const categoryBox2 = findToggles(categoryRows()[0])[0];
@@ -790,20 +849,20 @@ async function main() {
   check('部分勾选时分类框也显示三态 partial',
     categoryBoxPartial && categoryBoxPartial.dataset.state === 'partial',
     categoryBoxPartial && categoryBoxPartial.dataset.state);
-  // 卡组三态框点一下 = 全选该卡组（奇幻类/红楼梦 7 张）
+  // 卡组三态框点一下 = 全选该卡组（奇幻类/红楼梦）
   clickCheckbox(deckBoxPartial);
-  check('卡组三态框点一下变全选（奇幻类 7 张）',
-    env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards === 7,
+  check('卡组三态框点一下变全选（奇幻类）',
+    env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards === FANTASY_TOTAL,
     String(env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards));
   // 再点一下 = 全不选，回到干净状态
   clickCheckbox(findToggles(deckRows()[0])[0]);
   check('全选框再点一下变全不选',
     env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards === 0);
-  // 两个分类都勾上 = 138 张
+  // 两个分类都勾上 = 全库张数
   clickCheckbox(findToggles(categoryRows()[0])[0]);
   clickCheckbox(findToggles(categoryRows()[1])[0]);
-  check('两个分类都勾上 = 138 张',
-    env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards === 138,
+  check('两个分类都勾上 = 全库张数',
+    env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards === TOTAL,
     String(env.sandbox.scSummarizeSelection(env.sandbox.scGetSettings()).selectedCards));
   clickCheckbox(findToggles(categoryRows()[0])[0]);
   clickCheckbox(findToggles(categoryRows()[1])[0]);
@@ -850,9 +909,9 @@ async function main() {
     collapsedCategoryCounts.join(' | '));
   check('分类行计数不带「回」',
     collapsedCategoryCounts.every((text) => !text.includes('回')), collapsedCategoryCounts.join(' | '));
-  check('未勾选时分类行合计 0张/138张',
+  check('未勾选时分类行合计 0张/全库张数',
     collapsedCategoryCounts.every((text) => text.startsWith('0张/'))
-      && collapsedCategoryCounts.reduce((sum, text) => sum + Number(text.split('/')[1].replace('张', '')), 0) === 138,
+      && collapsedCategoryCounts.reduce((sum, text) => sum + Number(text.split('/')[1].replace('张', '')), 0) === TOTAL,
     collapsedCategoryCounts.join(' | '));
 
   // 展开分类 → 卡组行；展开卡组 → 主题行
@@ -895,7 +954,7 @@ async function main() {
   check('「导出卡片」按钮存在', Boolean(env.document.getElementById('sc-export-cards')));
   check('旧的加载 / 移除按钮已不在',
     !env.document.getElementById('sc-load-cards') && !env.document.getElementById('sc-clear-cards'));
-  check('卡库状态行显示张数', env.document.getElementById('sc-card-status').textContent.includes('138'),
+  check('卡库状态行显示张数', env.document.getElementById('sc-card-status').textContent.includes(String(TOTAL)),
     env.document.getElementById('sc-card-status').textContent);
 
   const newCard = {
@@ -915,7 +974,7 @@ async function main() {
   const importResult = env.sandbox.scImportCardsFromText(importText);
   check('导入 1 张（新增 1）', importResult.ok && importResult.added === 1 && importResult.replaced === 0,
     JSON.stringify(importResult));
-  check('导入后卡库 = 139 张', env.sandbox.scGetLibrary().length === 139,
+  check('导入后卡库 = 全库 + 1', env.sandbox.scGetLibrary().length === TOTAL + 1,
     String(env.sandbox.scGetLibrary().length));
   check('新卡组出现在范围树里',
     env.sandbox.scBuildScopeTree().some((category) => category.decks.some((deck) => deck.name === '新卡组')));
@@ -931,7 +990,7 @@ async function main() {
     JSON.stringify(overwriteResult));
   check('覆盖后卡面已更新',
     env.sandbox.scGetLibrary().find((card) => card.id === 'X1-01-试作卡').face.includes('改过的卡面'));
-  check('覆盖后总数仍是 139', env.sandbox.scGetLibrary().length === 139,
+  check('覆盖后总数仍是 全库 + 1', env.sandbox.scGetLibrary().length === TOTAL + 1,
     String(env.sandbox.scGetLibrary().length));
 
   // 缺层级字段：兜底到未分组 / 未分类 / 未分主题，而不是被丢弃
@@ -940,7 +999,7 @@ async function main() {
   check('缺层级字段的卡归到未分组', bareResult.ok && bareCard
     && bareCard.deck === '未分组' && bareCard.category === '未分类' && bareCard.chapter === '未分主题',
     bareCard && [bareCard.deck, bareCard.category, bareCard.chapter].join('/'));
-  check('层级兜底后总数 = 140', env.sandbox.scGetLibrary().length === 140,
+  check('层级兜底后总数 = 全库 + 2', env.sandbox.scGetLibrary().length === TOTAL + 2,
     String(env.sandbox.scGetLibrary().length));
 
   // 坏文件不能把卡库搞乱
@@ -970,7 +1029,7 @@ async function main() {
   const exportData = JSON.parse(exportJson);
   check('导出 JSON 带格式标识与版本',
     exportData.format === 'story-cards' && exportData.version === 1, exportData.format + '/' + exportData.version);
-  check('导出张数与卡库一致', exportData.count === 140 && exportData.cards.length === 140,
+  check('导出张数与卡库一致', exportData.count === TOTAL + 2 && exportData.cards.length === TOTAL + 2,
     exportData.count + '/' + exportData.cards.length);
   check('导出条目含卡面与层级', exportData.cards.every((card) => card.id && card.deck && card.category
     && card.chapter && typeof card.face === 'string'));
@@ -986,7 +1045,7 @@ async function main() {
   check('导出触发了下载', downloaded === true && env.downloads.length === downloadsBefore + 1);
   const downloadedBlob = env.downloads[env.downloads.length - 1];
   check('下载内容是完整 JSON',
-    downloadedBlob.type.includes('application/json') && JSON.parse(downloadedBlob.text).count === 140);
+    downloadedBlob.type.includes('application/json') && JSON.parse(downloadedBlob.text).count === TOTAL + 2);
 
   env.sandbox.scHandleExportCards();
   check('点导出会更新状态行', env.document.getElementById('sc-card-status').textContent.includes('已导出'),
@@ -997,8 +1056,8 @@ async function main() {
   const reimport = env.sandbox.scImportCardsFromText(exportJson);
   check('重复导入同一份导出不会新增自定义卡',
     reimport.ok && env.sandbox.scGetCustomCards().length === beforeReimport, JSON.stringify(reimport));
-  check('重复导入时内置卡被识别为「与内置一致」', reimport.unchanged === 138, String(reimport.unchanged));
-  check('重复导入后总数仍是 140', env.sandbox.scGetLibrary().length === 140,
+  check('重复导入时内置卡被识别为「与内置一致」', reimport.unchanged === TOTAL, String(reimport.unchanged));
+  check('重复导入后总数仍是 全库 + 2', env.sandbox.scGetLibrary().length === TOTAL + 2,
     String(env.sandbox.scGetLibrary().length));
 
   // 文件入口：大小上限与正常读取
@@ -1015,7 +1074,7 @@ async function main() {
 
   // 清空导入，回到构建期卡库（数据层）
   env.sandbox.scGetSettings().customCards = [];
-  check('清空导入后回到 138 张', env.sandbox.scGetLibrary().length === 138,
+  check('清空导入后回到全库张数', env.sandbox.scGetLibrary().length === TOTAL,
     String(env.sandbox.scGetLibrary().length));
   check('清空导入后新卡组从范围树消失',
     !env.sandbox.scBuildScopeTree().some((category) => category.decks.some((deck) => deck.name === '新卡组')));

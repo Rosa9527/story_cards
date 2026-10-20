@@ -173,6 +173,22 @@ function scCreatePanel() {
   result.id = SC_RESULT_ID;
   body.appendChild(result);
 
+  // 「查看注入的提示词」：把最近一次真正写进宿主槽位的 <Story_Card_Draw> 原文摊开给玩家看。
+  // 默认收起，点一下展开/收起；展开区可复制。
+  const injectSection = scCreate('div', 'sc-inject');
+  const viewButton = scCreate('button', 'sc-button');
+  viewButton.id = SC_VIEW_INJECT_BUTTON_ID;
+  viewButton.type = 'button';
+  viewButton.innerHTML = '<i class="fa-solid fa-eye"></i><span>查看注入的提示词</span>';
+  viewButton.title = '显示最近一次抽卡真正注入给模型的系统导演注原文';
+  viewButton.addEventListener('click', () => scToggleInjectPreview());
+  injectSection.appendChild(viewButton);
+  const injectPreview = scCreate('div', 'sc-inject__preview');
+  injectPreview.id = SC_INJECT_PREVIEW_ID;
+  injectPreview.hidden = true;
+  injectSection.appendChild(injectPreview);
+  body.appendChild(injectSection);
+
   panel.appendChild(body);
   document.body.appendChild(panel);
 }
@@ -647,6 +663,86 @@ function scSetResult(kind, text, detail) {
   if (detail) result.appendChild(scCreate('div', 'sc-result__detail', detail));
 }
 
+// ---------- 查看注入的提示词 ----------
+// 展开 / 收起注入预览；展开时按最近一次注入记录重画内容。
+function scToggleInjectPreview() {
+  const preview = scEl(SC_INJECT_PREVIEW_ID);
+  if (!preview) return;
+  if (preview.hidden) {
+    scRenderInjectPreview();
+    preview.hidden = false;
+    scEl(SC_VIEW_INJECT_BUTTON_ID)?.classList.add('sc-button--active');
+  } else {
+    preview.hidden = true;
+    scEl(SC_VIEW_INJECT_BUTTON_ID)?.classList.remove('sc-button--active');
+  }
+}
+
+// 画注入预览：落点参数 + 原文（等宽、可滚动、可复制）。
+function scRenderInjectPreview() {
+  const preview = scEl(SC_INJECT_PREVIEW_ID);
+  if (!preview) return;
+  preview.textContent = '';
+  const record = scGetLastInjection();
+  if (!record) {
+    preview.appendChild(scCreate('div', 'sc-inject__empty',
+      '还没有抽过卡。点一次「剧情抽卡」，这里就会显示实际注入给模型的提示词原文。'));
+    return;
+  }
+
+  const slotName = record.inChat === SC_INJECT_TYPE_IN_CHAT ? 'IN_CHAT' : String(record.inChat);
+  const roleName = record.systemRole === SC_INJECT_ROLE_SYSTEM ? 'SYSTEM' : String(record.systemRole);
+  const meta = scCreate('div', 'sc-inject__meta');
+  const title = record.cardName ? `${record.cardId || ''} ${record.cardName}`.trim() : '（未知卡）';
+  meta.appendChild(scCreate('span', 'sc-inject__meta-item', `卡：${title}`));
+  meta.appendChild(scCreate('span', 'sc-inject__meta-item', `槽位：${slotName}`));
+  meta.appendChild(scCreate('span', 'sc-inject__meta-item', `角色：${roleName}`));
+  meta.appendChild(scCreate('span', 'sc-inject__meta-item', `深度：${record.depth}`));
+  meta.appendChild(scCreate('span', 'sc-inject__meta-item', `字符数：${record.text.length}`));
+  preview.appendChild(meta);
+
+  const toolbar = scCreate('div', 'sc-inject__toolbar');
+  const copyButton = scCreate('button', 'sc-icon-button');
+  copyButton.id = SC_INJECT_COPY_BUTTON_ID;
+  copyButton.type = 'button';
+  copyButton.textContent = '复制原文';
+  copyButton.addEventListener('click', () => scCopyInjectText(record.text));
+  toolbar.appendChild(copyButton);
+  preview.appendChild(toolbar);
+
+  const pre = scCreate('pre', 'sc-inject__text', record.text);
+  preview.appendChild(pre);
+}
+
+// 复制注入原文到剪贴板；宿主没有剪贴板 API 时退回选中文本，让玩家自己 Ctrl+C。
+function scCopyInjectText(text) {
+  const value = String(text || '');
+  const done = () => scToast('success', '注入原文已复制');
+  try {
+    if (globalThis.navigator?.clipboard?.writeText) {
+      globalThis.navigator.clipboard.writeText(value).then(done, () => scFallbackCopy());
+      return;
+    }
+  } catch (error) {
+    /* 落到兜底 */
+  }
+  scFallbackCopy();
+}
+
+function scFallbackCopy() {
+  const preview = scEl(SC_INJECT_PREVIEW_ID);
+  let pre = null;
+  if (preview) {
+    if (typeof preview.querySelector === 'function') pre = preview.querySelector('.sc-inject__text');
+    // 测试用的最小 DOM 没有 querySelector，退回它的 walk/find 助手。
+    if (!pre && typeof preview.find === 'function') {
+      pre = preview.find((node) => node.classList && node.classList.contains('sc-inject__text'));
+    }
+  }
+  if (pre && typeof pre.select === 'function') pre.select();
+  scToast('info', '请按 Ctrl+C 复制（宿主不支持剪贴板 API）');
+}
+
 // ---------- 卡牌状态行 ----------
 // 状态行有两种内容：操作结果（「导入 138 张…」，要留住）与卡库概况（「卡库 138 张」，
 // 随时可重画）。scRenderScopeTree 会反复触发概况重画，所以必须记住当前是不是操作结果，
@@ -736,6 +832,9 @@ async function scHandleDraw() {
     else if (settings.avoidRepeat !== false) notes.push(`本轮候选 ${outcome.candidates.length} 张`);
     scSetResult('ok', title, [bits, notes.join(' · ')].filter(Boolean).join('　|　'));
     scRefreshSummary();
+    // 预览开着的话，跟着换成这一轮的注入原文。
+    const preview = scEl(SC_INJECT_PREVIEW_ID);
+    if (preview && !preview.hidden) scRenderInjectPreview();
     // 抽卡后把卡牌状态行切回「卡库概况」：上一句「导入 N 张…」的任务已经完成，
     // 没必要一直占着状态行。
     scRefreshCardStatus(true);
