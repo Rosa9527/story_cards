@@ -554,6 +554,19 @@ check('以 </Story_Card_Draw> 结尾', injectText.endsWith('</Story_Card_Draw>')
 check('声明了「不是剧情正文」', injectText.includes('不是剧情正文'));
 check('带强制执行规则', injectText.includes('强制指令') && injectText.includes('不得整段弃用')
   && injectText.includes('直接驱动') && injectText.includes('冲突裁决'));
+check('合理化排在第一条且标注最重要',
+  injectText.includes('1. 合理化（最重要）'), injectText.split('\n').find((l) => l.startsWith('1. ')));
+check('合理化要求「宁可玩家不出场，也不硬塞」',
+  injectText.includes('宁可让玩家完全不出场') && injectText.includes('也不要把玩家硬塞进场景'));
+check('文字风格服从正文既有文风',
+  injectText.includes('文字风格') && injectText.includes('不要照搬它的文风')
+    && injectText.includes('不改变正文风格'));
+check('衔接允许推进时间 / 切场景（不要求无缝）',
+  injectText.includes('可以推进时间') && injectText.includes('切到下一个场景')
+    && !injectText.includes('无缝衔接'));
+check('冲突裁决以卡为准（覆盖惯性理解）',
+  injectText.includes('以本卡为准') && injectText.includes('惯性理解'));
+check('不再出现旧的「优先级」条目', !injectText.includes('5. 优先级'));
 check('带卡 id / 卡名',
   injectText.includes(`id="${sample.id}"`) && injectText.includes(`name="${sample.name}"`),
   `${sample.id} / ${sample.name}`);
