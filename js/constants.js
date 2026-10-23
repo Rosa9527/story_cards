@@ -3,13 +3,14 @@
 // （js/ 下所有文件共享全局作用域）。
 const SC_MODULE_NAME = 'StoryCards';
 const SC_MODULE_DISPLAY_NAME = '剧情抽卡';
-const SC_MODULE_VERSION = '1.0.0';
+const SC_MODULE_VERSION = '1.1.0';
 
 // ---------- DOM ID / class ----------
 const SC_MENU_ITEM_ID = 'sc-menu-item';
 const SC_MENU_API_ID = 'sc-menu-api';
 const SC_FLOATING_BUTTON_ID = 'sc-floating-button';
 const SC_PANEL_ID = 'sc-panel';
+const SC_PANEL_DIALOG_ID = 'sc-panel-dialog';
 const SC_PANEL_TITLE_ID = 'sc-panel-title';
 const SC_PANEL_TITLE_ICON_ID = 'sc-panel-title-icon';
 const SC_RESET_BUTTON_ID = 'sc-reset-drawn';
@@ -51,6 +52,9 @@ const SC_DEFAULT_SETTINGS = Object.freeze({
   // 悬浮按钮位置（视口坐标，左上角）。null = 用默认位置（右下角）。
   floatX: null,
   floatY: null,
+  // 悬浮窗面板位置（视口坐标，左上角）。null = 用默认位置（视口右上）。
+  panelX: null,
+  panelY: null,
 });
 
 // 悬浮按钮拖动：尺寸与贴边留白（与 style.css 里的 .sc-floating-button 保持一致）。
@@ -62,6 +66,10 @@ const SC_FLOAT_DRAG_THRESHOLD = 5;
 // 与 Kaleidoscope 的悬浮球保持同一手感（650ms / 8px）。
 const SC_FLOAT_LONG_PRESS_MS = 650;
 const SC_FLOAT_LONG_PRESS_SLOP = 8;
+
+// 悬浮窗面板：夹取位置时的兜底估算尺寸（真实尺寸以打开后的 offsetWidth/offsetHeight 为准）。
+const SC_PANEL_FALLBACK_WIDTH = 400;
+const SC_PANEL_FALLBACK_HEIGHT = 480;
 
 // 按聊天记录已抽卡 ID 的存储位置（chatMetadata），每个聊天各记一份。
 const SC_CHAT_DRAWN_META_KEY = 'story_cards_drawn';
@@ -122,6 +130,8 @@ const SC_GEN_STARTED_HANDLER_KEY = '__story_cards_gen_started__';
 const SC_CHAT_CHANGED_HANDLER_KEY = '__story_cards_chat_changed__';
 // 悬浮按钮的窗口 resize 监听（挂一次就够，避免重复 bootstrap 时叠加）。
 const SC_FLOAT_RESIZE_HOOK_KEY = '__story_cards_float_resize__';
+// 悬浮窗面板的窗口 resize 监听（同上，挂一次就够）。
+const SC_PANEL_RESIZE_HOOK_KEY = '__story_cards_panel_resize__';
 
 // 本轮抽卡记录（内存态，供重新生成时重放注入）。
 const SC_LAST_DRAW_KEY = '__story_cards_last_draw__';

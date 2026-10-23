@@ -1,5 +1,7 @@
-// ===== 剧情抽卡（Story Cards）UI 层：悬浮按钮 + 面板（范围树 / 抽卡按钮 / 结果） =====
+// ===== 剧情抽卡（Story Cards）UI 层：悬浮按钮 + 悬浮窗面板（范围树 / 抽卡按钮 / 结果） =====
 // 面板刻意做小：选范围 → 点抽卡 → 看结果。抽到就立刻填输入框并发出去。
+// 面板本身是一个可拖动的悬浮窗（与万华镜一致）：拖标题栏移动、位置夹在视口内并记忆、
+// 面板打开期间悬浮球暂时收起，关闭面板后再请回来。
 
 // 展开态是纯 UI 状态，不进设置：重渲染（勾选变化触发）时保持玩家的展开/收起。
 // 两层都能展开：顶层是分类（与 cards/<分类>/... 对应），第二层是卡组。
@@ -48,11 +50,15 @@ function scOpenPanel() {
   if (!panel) return;
   panel.classList.add('sc-panel--open');
   panel.setAttribute('aria-hidden', 'false');
+  // 悬浮窗落位：优先用上次保存的位置，并夹在视口内（要在显示之后再算，offsetWidth 才有效）。
+  scApplyPanelPosition();
   // 每次打开都回到主界面，避免上次停在查看界面时看着像「卡住了」。
   scShowMainView();
   scRenderScopeTree();
   // 概况行只在没有操作结果时补画，别把「已导出 …」这类提示顶掉。
   scRefreshCardStatus();
+  // 面板打开期间悬浮球暂时收起（与万华镜一致），关闭面板时由 scClosePanel 请回来。
+  scApplyFloatingButtonVisibility();
 }
 
 function scClosePanel() {
@@ -60,6 +66,8 @@ function scClosePanel() {
   if (!panel) return;
   panel.classList.remove('sc-panel--open');
   panel.setAttribute('aria-hidden', 'true');
+  // 关闭面板后把悬浮球请回来（打开面板时会先暂时收起它）。
+  scApplyFloatingButtonVisibility();
 }
 
 function scTogglePanel() {
@@ -67,14 +75,129 @@ function scTogglePanel() {
   else scOpenPanel();
 }
 
+// ---------- 悬浮窗定位与拖动 ----------
+// 与万华镜（Kaleidoscope）一致：面板是可拖动的悬浮窗，位置由内联 left/top 控制
+// （永远夹在视口内），拖标题栏移动，拖完落盘设置，重启后还在原处。
+
+function scGetPanelDialog() {
+  return scEl(SC_PANEL_DIALOG_ID);
+}
+
+// 把坐标夹在视口内，保证悬浮窗永远完整可见、可拖。
+function scClampPanelPosition(left, top) {
+  const viewport = scViewportSize();
+  const dialog = scGetPanelDialog();
+  const width = dialog?.offsetWidth || SC_PANEL_FALLBACK_WIDTH;
+  const height = dialog?.offsetHeight || SC_PANEL_FALLBACK_HEIGHT;
+  const maxLeft = Math.max(0, viewport.width - width);
+  const maxTop = Math.max(0, viewport.height - height);
+  return {
+    left: Math.min(Math.max(Number(left) || 0, 0), maxLeft),
+    top: Math.min(Math.max(Number(top) || 0, 0), maxTop),
+  };
+}
+
+function scSetPanelPosition(left, top) {
+  const dialog = scGetPanelDialog();
+  if (!dialog) return null;
+  const clamped = scClampPanelPosition(left, top);
+  dialog.style.left = clamped.left + 'px';
+  dialog.style.top = clamped.top + 'px';
+  // 定位改用 left/top 后必须清掉 right/bottom，否则两者会互相打架。
+  dialog.style.right = 'auto';
+  dialog.style.bottom = 'auto';
+  return clamped;
+}
+
+// 默认位置：视口右上（沿用旧版面板的落点：top 64 / 距右 18）。
+function scDefaultPanelPosition() {
+  const viewport = scViewportSize();
+  const dialog = scGetPanelDialog();
+  const width = dialog?.offsetWidth || SC_PANEL_FALLBACK_WIDTH;
+  return scClampPanelPosition(viewport.width - width - 18, 64);
+}
+
+// 落位：优先用设置里保存的位置，没有就用默认位置。只在打开面板 / 视口变化时调用。
+function scApplyPanelPosition() {
+  const settings = scGetSettings();
+  const fallback = scDefaultPanelPosition();
+  const left = Number.isFinite(settings.panelX) ? settings.panelX : fallback.left;
+  const top = Number.isFinite(settings.panelY) ? settings.panelY : fallback.top;
+  return scSetPanelPosition(left, top);
+}
+
+// 拖标题栏移动悬浮窗。监听挂在标题栏上（配合 setPointerCapture，与悬浮球同一套路）。
+// 按在标题栏内的按钮（查看 / 重置 / 关闭）上时不启动拖拽：否则指针捕获会把后续
+// click 重定向到标题栏，按钮点击失效。
+function scInstallPanelDrag(dialog, header) {
+  let dragState = null;
+
+  const endDrag = () => {
+    if (!dragState) return;
+    const state = dragState;
+    dragState = null;
+    dialog.classList.remove('is-dragging');
+    // 落盘：拖动结束后才写设置，拖动过程中不刷盘。
+    if (state.moved) {
+      const settings = scGetSettings();
+      settings.panelX = state.left;
+      settings.panelY = state.top;
+      scSaveSettings();
+    }
+  };
+
+  header.addEventListener('pointerdown', (event) => {
+    if (event.button !== undefined && event.button !== 0) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('button')) return;
+    // 用视觉位置（getBoundingClientRect）算偏移：指针按在哪，拖动时就保持在哪。
+    const rect = dialog.getBoundingClientRect();
+    dragState = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      left: rect.left,
+      top: rect.top,
+      moved: false,
+    };
+    dialog.classList.add('is-dragging');
+    try {
+      header.setPointerCapture?.(event.pointerId);
+    } catch (error) { /* 没捕获到就算了 */ }
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+  });
+
+  header.addEventListener('pointermove', (event) => {
+    if (!dragState) return;
+    if (event.pointerId !== undefined && dragState.pointerId !== undefined
+      && event.pointerId !== dragState.pointerId) return;
+    const next = scSetPanelPosition(event.clientX - dragState.offsetX, event.clientY - dragState.offsetY);
+    if (next) {
+      dragState.moved = true;
+      dragState.left = next.left;
+      dragState.top = next.top;
+    }
+  });
+
+  header.addEventListener('pointerup', endDrag);
+  header.addEventListener('pointercancel', endDrag);
+}
+
 // ---------- 面板骨架 ----------
+// 结构与万华镜一致：外层 .sc-panel 是覆盖层（铺满视口、不吃指针事件），
+// 内层 .sc-panel__dialog 是悬浮窗本体（可拖动，left/top 由 JS 写）。
 function scCreatePanel() {
   if (scEl(SC_PANEL_ID)) return;
   const panel = scCreate('div', 'sc-panel');
   panel.id = SC_PANEL_ID;
   panel.setAttribute('aria-hidden', 'true');
 
-  const header = scCreate('div', 'sc-panel__header');
+  const dialog = scCreate('div', 'sc-panel__dialog');
+  dialog.id = SC_PANEL_DIALOG_ID;
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-label', SC_MODULE_DISPLAY_NAME);
+
+  const header = scCreate('div', 'sc-panel__header sc-panel__drag-handle');
   const title = scCreate('div', 'sc-panel__title');
   const titleIcon = scCreate('i', SC_DRAW_ICON_CLASS);
   titleIcon.id = SC_PANEL_TITLE_ICON_ID;
@@ -84,17 +207,20 @@ function scCreatePanel() {
   title.appendChild(titleText);
   const headerActions = scCreate('div', 'sc-panel__header-actions');
   // 「查看注入的提示词」：标题栏按钮，点一下把面板整体切到查看界面（见 scShowInjectView）。
-  const viewButton = scCreate('button', 'sc-icon-button sc-icon-button--view');
+  const viewButton = scCreate('button', 'sc-icon-button sc-icon-button--icon');
   viewButton.id = SC_VIEW_INJECT_BUTTON_ID;
   viewButton.type = 'button';
   viewButton.innerHTML = '<i class="fa-solid fa-eye"></i>';
   viewButton.title = '查看注入的提示词';
   viewButton.setAttribute('aria-label', '查看注入的提示词');
   viewButton.addEventListener('click', () => scShowInjectView());
-  const resetButton = scCreate('button', 'sc-icon-button', '重置记录');
+  // 「重置记录」：与眼睛按钮同款的纯图标按钮（旋转箭头），说明放悬停提示里。
+  const resetButton = scCreate('button', 'sc-icon-button sc-icon-button--icon');
   resetButton.id = SC_RESET_BUTTON_ID;
   resetButton.type = 'button';
-  resetButton.title = '清空当前聊天的「抽过不重复」记录';
+  resetButton.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i>';
+  resetButton.title = '重置记录：清空当前聊天的「抽过不重复」记录';
+  resetButton.setAttribute('aria-label', '重置记录');
   resetButton.addEventListener('click', () => scHandleResetDrawn());
   const closeButton = scCreate('button', 'sc-icon-button sc-icon-button--close', '×');
   closeButton.type = 'button';
@@ -105,7 +231,7 @@ function scCreatePanel() {
   headerActions.appendChild(closeButton);
   header.appendChild(title);
   header.appendChild(headerActions);
-  panel.appendChild(header);
+  dialog.appendChild(header);
 
   const body = scCreate('div', 'sc-panel__body');
 
@@ -218,8 +344,17 @@ function scCreatePanel() {
 
   body.appendChild(injectView);
 
-  panel.appendChild(body);
+  dialog.appendChild(body);
+  panel.appendChild(dialog);
   document.body.appendChild(panel);
+  scInstallPanelDrag(dialog, header);
+  // 视口变化后把悬浮窗夹回视口内（横竖屏切换、拉窗口都可能让它跑出去）。
+  if (!globalThis[SC_PANEL_RESIZE_HOOK_KEY] && typeof globalThis.addEventListener === 'function') {
+    globalThis[SC_PANEL_RESIZE_HOOK_KEY] = () => {
+      if (scIsPanelOpen()) scApplyPanelPosition();
+    };
+    globalThis.addEventListener('resize', globalThis[SC_PANEL_RESIZE_HOOK_KEY]);
+  }
 }
 
 // ---------- 悬浮按钮（可自由拖动） ----------
@@ -457,9 +592,11 @@ function scApplyFloatingButtonVisibility() {
   const settings = scGetSettings();
   const button = scEl(SC_FLOATING_BUTTON_ID);
   if (!button) return;
-  button.style.display = settings.showFloatingButton === false ? 'none' : 'flex';
+  // 悬浮球在两种情况下隐藏：设置里关掉了；面板开着（暂时收起，关面板时请回来）。
+  const visible = settings.showFloatingButton !== false && !scIsPanelOpen();
+  button.style.display = visible ? 'flex' : 'none';
   // 显示时顺手夹一次位置：按钮隐藏期间视口可能变过。
-  if (settings.showFloatingButton !== false) scRestoreFloatPosition();
+  if (visible) scRestoreFloatPosition();
 }
 
 // ---------- 范围树 ----------

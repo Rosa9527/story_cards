@@ -54,6 +54,8 @@ function scGetSettings() {
   if (typeof settings.avoidRepeat !== 'boolean') settings.avoidRepeat = SC_DEFAULT_SETTINGS.avoidRepeat;
   if (!Number.isFinite(settings.floatX)) settings.floatX = null;
   if (!Number.isFinite(settings.floatY)) settings.floatY = null;
+  if (!Number.isFinite(settings.panelX)) settings.panelX = null;
+  if (!Number.isFinite(settings.panelY)) settings.panelY = null;
   return settings;
 }
 

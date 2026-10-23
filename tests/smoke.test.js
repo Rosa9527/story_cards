@@ -1279,6 +1279,66 @@ async function main() {
   env.sandbox.scShowFloatingButton();
   env.sandbox.scClosePanel();
 
+  // ---------- 10c. 悬浮窗面板（可拖动 / 夹取 / 位置记忆 / 悬浮球联动） ----------
+  section('悬浮窗面板');
+  const panelEl = env.document.getElementById('sc-panel');
+  const panelDialog = env.document.getElementById('sc-panel-dialog');
+  const panelHeader = panelDialog.find((node) => node.classList.contains('sc-panel__header'));
+  const panelClose = panelHeader.find((node) => node.classList.contains('sc-icon-button--close'));
+  check('面板是「覆盖层 + 悬浮窗」结构', Boolean(panelEl) && Boolean(panelDialog) && Boolean(panelHeader));
+  check('标题栏带拖动把手样式', panelHeader.classList.contains('sc-panel__drag-handle'));
+
+  // 打开：落位到默认位置（视口右上：1280-400-18 / 64），悬浮球暂时收起
+  env.sandbox.scOpenPanel();
+  check('打开面板后悬浮窗已落位',
+    panelDialog.style.left === '862px' && panelDialog.style.top === '64px',
+    panelDialog.style.left + '/' + panelDialog.style.top);
+  check('面板打开期间悬浮球暂时隐藏', ball.style.display === 'none', ball.style.display);
+
+  // 夹取：拖出视口要被夹回来（视口 1280x800，兜底尺寸 400x480 → x≤880、y≤320）
+  env.sandbox.scSetPanelPosition(5000, 5000);
+  check('拖出右下角被夹在视口内', panelDialog.style.left === '880px' && panelDialog.style.top === '320px',
+    panelDialog.style.left + '/' + panelDialog.style.top);
+  env.sandbox.scSetPanelPosition(-50, -50);
+  check('拖出左上角被夹回 0/0', panelDialog.style.left === '0px' && panelDialog.style.top === '0px',
+    panelDialog.style.left + '/' + panelDialog.style.top);
+
+  // 标题栏拖动：悬浮窗跟随指针，松手后才落盘设置
+  const panelPointer = (x, y, target) => ({ clientX: x, clientY: y, pointerId: 1, button: 0, target, preventDefault() {} });
+  env.sandbox.scSetPanelPosition(100, 100);
+  panelHeader.dispatch('pointerdown', panelPointer(140, 120, panelHeader));
+  check('拖动进行中悬浮窗带 is-dragging', panelDialog.classList.contains('is-dragging'));
+  panelHeader.dispatch('pointermove', panelPointer(240, 170, panelHeader));
+  check('拖动时悬浮窗跟着指针走', panelDialog.style.left === '200px' && panelDialog.style.top === '150px',
+    panelDialog.style.left + '/' + panelDialog.style.top);
+  check('拖动过程中不写设置（松手才落盘）', env.sandbox.scGetSettings().panelX === null,
+    String(env.sandbox.scGetSettings().panelX));
+  panelHeader.dispatch('pointerup', panelPointer(240, 170, panelHeader));
+  check('松手后位置写进设置',
+    env.sandbox.scGetSettings().panelX === 200 && env.sandbox.scGetSettings().panelY === 150,
+    env.sandbox.scGetSettings().panelX + ',' + env.sandbox.scGetSettings().panelY);
+  check('松手后 is-dragging 已移除', !panelDialog.classList.contains('is-dragging'));
+
+  // 按在标题栏的按钮（关闭键）上不启动拖拽：否则指针捕获会把按钮的 click 吃掉
+  env.sandbox.scSetPanelPosition(60, 40);
+  panelHeader.dispatch('pointerdown', panelPointer(80, 60, panelClose));
+  panelHeader.dispatch('pointermove', panelPointer(180, 160, panelClose));
+  check('按在标题栏按钮上不拖动悬浮窗',
+    panelDialog.style.left === '60px' && panelDialog.style.top === '40px',
+    panelDialog.style.left + '/' + panelDialog.style.top);
+  panelHeader.dispatch('pointerup', panelPointer(180, 160, panelClose));
+  check('按钮上的拖动不写设置', env.sandbox.scGetSettings().panelX === 200,
+    String(env.sandbox.scGetSettings().panelX));
+
+  // 关闭：悬浮球请回来；再打开：位置从设置里恢复
+  env.sandbox.scClosePanel();
+  check('关闭面板后悬浮球回来', ball.style.display !== 'none', ball.style.display);
+  env.sandbox.scOpenPanel();
+  check('重新打开后悬浮窗回到上次的位置',
+    panelDialog.style.left === '200px' && panelDialog.style.top === '150px',
+    panelDialog.style.left + '/' + panelDialog.style.top);
+  env.sandbox.scClosePanel();
+
   // ---------- 11. TauriTavern 式宿主上下文（回归） ----------
   // 真实 TauriTavern 的 getContext() 有两个特点，之前任一都会让勾选「点了没反应」：
   //   1. 只给 extensionSettings（驼峰），没有 extension_settings；

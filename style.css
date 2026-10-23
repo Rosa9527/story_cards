@@ -2,6 +2,9 @@
 /* 全部选择器带 sc- 前缀，避免和宿主 / 其他扩展撞样式。
    颜色优先跟随酒馆主题变量（--SmartThemeBodyColor 等），读不到时用兜底值。 */
 
+/* 面板 = 覆盖层（.sc-panel）+ 悬浮窗本体（.sc-panel__dialog），与万华镜一致：
+   覆盖层铺满视口但不吃指针事件，点击面板外的区域照常落到宿主界面上；
+   悬浮窗的位置（left/top）由 JS 写内联样式并夹在视口内，拖标题栏可移动。 */
 .sc-panel {
   --sc-bg: var(--SmartThemeBlurTintColor, rgba(28, 28, 32, 0.96));
   --sc-fg: var(--SmartThemeBodyColor, #e8e8ea);
@@ -13,13 +16,27 @@
   --sc-err: #d9534f;
 
   position: fixed;
-  top: 64px;
-  right: 18px;
+  inset: 0;
   z-index: 30000;
-  width: min(400px, calc(100vw - 24px));
-  max-height: min(76vh, 720px);
   display: none;
+  pointer-events: none;
+}
+
+.sc-panel--open {
+  display: block;
+}
+
+.sc-panel__dialog {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  width: min(400px, calc(100vw - 20px));
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  display: flex;
   flex-direction: column;
+  pointer-events: auto;
   color: var(--sc-fg);
   background: var(--sc-bg);
   border: 1px solid var(--sc-border);
@@ -31,8 +48,10 @@
   overflow: hidden;
 }
 
-.sc-panel--open {
-  display: flex;
+.sc-panel__dialog.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .sc-panel__header {
@@ -43,6 +62,13 @@
   padding: 10px 12px;
   border-bottom: 1px solid var(--sc-border);
   flex: 0 0 auto;
+  /* 标题栏是拖动把手；touch-action:none 让手机上按住标题栏拖动不被滚动手势抢走。 */
+  cursor: grab;
+  touch-action: none;
+}
+
+.sc-panel__header:active {
+  cursor: grabbing;
 }
 
 .sc-panel__title {
@@ -380,13 +406,14 @@
 .sc-result--error .sc-result__main { color: var(--sc-err); }
 
 /* ---------- 查看注入的提示词（独立查看界面） ---------- */
-/* 标题栏的眼睛按钮：与「重置记录」同款图标按钮，只是换成眼睛图标。 */
-.sc-icon-button--view {
+/* 标题栏的纯图标按钮（只有图标、没有文字）：眼睛 = 查看注入的提示词，
+   旋转箭头 = 重置记录。文字说明放 title / aria-label。 */
+.sc-icon-button--icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
-  padding: 4px 9px;
+  padding: 4px 8px;
 }
 
 /* 主界面 / 查看界面：同一时刻只显示一个（另一个 hidden）。 */
@@ -515,16 +542,4 @@
 .sc-floating-button.sc-floating-button--hiding {
   transform: scale(0.4);
   opacity: 0;
-}
-
-@media (max-width: 640px) {
-  .sc-panel {
-    top: auto;
-    bottom: 0;
-    right: 0;
-    left: 0;
-    width: 100%;
-    max-height: 78vh;
-    border-radius: 14px 14px 0 0;
-  }
 }
